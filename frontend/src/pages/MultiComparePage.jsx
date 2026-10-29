@@ -11,11 +11,24 @@ export default function MultiComparePage() {
   const cText = isDark ? '#eaecf0' : '#1a1d24';
   const cSub = isDark ? '#9ca3b0' : '#4b5260';
   const cGrid = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
-  const [caseIds, setCaseIds] = useState([]);
+
+  const [casesMeta, setCasesMeta] = useState([]);
+  const [hoveredCase, setHoveredCase] = useState(null);
   const [selected, setSelected] = useState([1, 22, 93]);
   const [data, setData] = useState(null);
 
-  useEffect(() => { api.get('/api/case-ids').then(r => setCaseIds(r.data)).catch(() => {}); }, []);
+  useEffect(() => {
+    api.get('/api/case-ids')
+      .then(r => {
+        if (r.data.length && typeof r.data[0] === 'object') {
+          setCasesMeta(r.data);
+        } else {
+          setCasesMeta(r.data.map(id => ({ id })));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     if (selected.length >= 2) {
       api.get(`/api/multi-compare?ids=${selected.join(',')}`).then(r => setData(r.data)).catch(() => {});
@@ -81,11 +94,41 @@ export default function MultiComparePage() {
       <h2>📊 {t('Multi-Dataset Comparison')}</h2>
       <p className="subtitle">{t('Select 2–4 datasets:')}</p>
 
+      {/* CHIP SELECTION GRID WITH HOVER CARD */}
       <div className="multi-select-grid">
-        {caseIds.map(id => (
-          <button key={id} className={`chip ${selected.includes(id) ? 'selected' : ''}`}
-            onClick={() => toggleId(id)}>#{id}</button>
-        ))}
+        {casesMeta.map(item => {
+          const cid = item.id;
+          const isHovered = hoveredCase?.id === cid;
+          return (
+            <div
+              key={cid}
+              className="chip-wrapper"
+              onMouseEnter={() => setHoveredCase(item)}
+              onMouseLeave={() => setHoveredCase(null)}
+            >
+              <button
+                className={`chip ${selected.includes(cid) ? 'selected' : ''}`}
+                onClick={() => toggleId(cid)}
+              >
+                #{cid}
+              </button>
+
+              {isHovered && item.mn !== undefined && (
+                <div className="chip-tooltip">
+                  <div className="chip-tooltip-title">Case #{cid} {t('Specs')}</div>
+                  <div className="chip-tooltip-grid">
+                    <div>mn: <b>{item.mn} mm</b></div>
+                    <div>β: <b>{item.beta}°</b></div>
+                    <div>z1/z2: <b>{item.z1}/{item.z2}</b></div>
+                    <div>b: <b>{item.b} mm</b></div>
+                    <div>T1: <b>{item.T1} Nm</b></div>
+                    <div>n1: <b>{item.n1} rpm</b></div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {selected.length < 2 && <div className="warning-box">⚠️ {t('Select at least 2')}</div>}

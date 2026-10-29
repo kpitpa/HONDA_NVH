@@ -18,19 +18,45 @@ export default function ParityPage() {
   const [data, setData] = useState(null);
   const [activeTab, setActiveTab] = useState('M');
 
-  useEffect(() => { api.get('/api/case-ids').then(r => setCaseIds(r.data)).catch(() => {}); }, []);
   useEffect(() => {
-    if (caseA && caseB) api.get(`/api/parity/${caseA}/${caseB}`).then(r => setData(r.data)).catch(() => {});
+    api.get('/api/case-ids')
+      .then(r => {
+        if (Array.isArray(r.data)) {
+          // Normalize whether backend returns objects or pure numbers
+          const ids = r.data.map(item => (typeof item === 'object' && item !== null ? item.id : item));
+          setCaseIds(ids);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (caseA && caseB) {
+      api.get(`/api/parity/${caseA}/${caseB}`)
+        .then(r => {
+          if (r.data && !r.data.error) {
+            setData(r.data);
+          }
+        })
+        .catch(() => {});
+    }
   }, [caseA, caseB]);
 
-  if (!data) return <div className="page"><p>{t('Loading...')}</p></div>;
+  if (!data || !data.case_a || !data.case_b || !data.all_data) {
+    return (
+      <div className="page" style={{ padding: '2rem' }}>
+        <h2>📈 {t('1:1 Parity Chart Comparison Between 2 Datasets')}</h2>
+        <p className="subtitle">{t('Loading parity comparison data...')}</p>
+      </div>
+    );
+  }
 
   const tabs = [
-    { key: 'M', label: '📐 Shaft Misalignment (M)', shortLabel: 'M', trueCol: 'Mtrue', predCol: 'Pred_M', tol: 6.0, unit: 'µm', fmt: 2, fullName: 'Shaft Misalignment (M)' },
-    { key: 'STE', label: '⚙️ Transmission Error (STE)', shortLabel: 'STE', trueCol: 'TEtrue', predCol: 'Pred_STE', tol: 0.35, unit: 'µm', fmt: 3, fullName: 'Transmission Error (STE)' },
-    { key: 'LW', label: '🔊 Radiated Noise Level (LW)', shortLabel: 'LW', trueCol: 'Sound', predCol: 'Pred_Sound', tol: 2.5, unit: 'dB', fmt: 2, fullName: 'Radiated Noise Level (LW)' },
+    { key: 'M', label: '📐 ' + t('Shaft Misalignment (M)'), shortLabel: 'M', trueCol: 'Mtrue', predCol: 'Pred_M', tol: 6.0, unit: 'µm', fmt: 2, fullName: t('Shaft Misalignment (M)') },
+    { key: 'STE', label: '⚙️ ' + t('Transmission Error (STE)'), shortLabel: 'STE', trueCol: 'TEtrue', predCol: 'Pred_STE', tol: 0.35, unit: 'µm', fmt: 3, fullName: t('Transmission Error (STE)') },
+    { key: 'LW', label: '🔊 ' + t('Radiated Noise Level (LW)'), shortLabel: 'LW', trueCol: 'Sound', predCol: 'Pred_Sound', tol: 2.5, unit: 'dB', fmt: 2, fullName: t('Radiated Noise Level (LW)') },
   ];
-  const cfg = tabs.find(t => t.key === activeTab);
+  const cfg = tabs.find(tb => tb.key === activeTab) || tabs[0];
   const allData = data.all_data;
   const a = data.case_a, b = data.case_b;
 
@@ -75,13 +101,13 @@ export default function ParityPage() {
       <div className="form-grid-2">
         <div className="form-section">
           <label>🔶 {t('Select Dataset A (Baseline / Reference)')}</label>
-          <select value={caseA} onChange={e => setCaseA(+e.target.value)} className="sidebar-select">
+          <select value={caseA} onChange={e => setCaseA(Number(e.target.value))} className="sidebar-select">
             {caseIds.map(id => <option key={id} value={id}>Case #{id}</option>)}
           </select>
         </div>
         <div className="form-section">
           <label>⭐ {t('Select Dataset B (Comparison Variant)')}</label>
-          <select value={caseB} onChange={e => setCaseB(+e.target.value)} className="sidebar-select">
+          <select value={caseB} onChange={e => setCaseB(Number(e.target.value))} className="sidebar-select">
             {caseIds.map(id => <option key={id} value={id}>Case #{id}</option>)}
           </select>
         </div>

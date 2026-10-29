@@ -41,10 +41,12 @@ function BarChart({ labels, values, colors, texts, yTitle, height = 310 }) {
 }
 
 export default function MainWorkspace() {
-  const { scenarioIdx, inputParams, setInputParams, actualTargets } = useApp();
+  const { scenarioIdx, inputParams, setInputParams, actualTargets, setActualTargets, refreshCaseIds } = useApp();
   const t = useTranslate();
   const [prediction, setPrediction] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [savingCase, setSavingCase] = useState(false);
+  const [saveSuccessMsg, setSaveSuccessMsg] = useState('');
 
   // Sensitivity state
   const [deltaM, setDeltaM] = useState(2.0);
@@ -116,6 +118,35 @@ export default function MainWorkspace() {
       const a = document.createElement('a'); a.href = url; a.download = 'HONDA_NVH_OUTPUT_REPORT.xlsx'; a.click();
       URL.revokeObjectURL(url);
     } catch {}
+  };
+
+  const saveAsBenchmark = async () => {
+    setSavingCase(true);
+    setSaveSuccessMsg('');
+    try {
+      const res = await api.post('/api/case/add', {
+        params: { ...params, i: parseFloat(calcRatio), template_id: actualTargets?.id || 1 },
+        targets: prediction ? {
+          Mtrue: prediction.M,
+          TEtrue: prediction.STE,
+          Sound: prediction.Sound,
+        } : null,
+      });
+      if (res.data.status === 'success') {
+        setSaveSuccessMsg(`✅ ${res.data.message}! Case #${res.data.id} is now permanently saved.`);
+        if (setActualTargets && res.data.case?.targets) {
+          setActualTargets(res.data.case.targets);
+        }
+        if (refreshCaseIds) {
+          await refreshCaseIds();
+        }
+        setTimeout(() => setSaveSuccessMsg(''), 6000);
+      }
+    } catch {
+      setSaveSuccessMsg('❌ Failed to save new benchmark case.');
+    } finally {
+      setSavingCase(false);
+    }
   };
 
   if (scenarioIdx === 0) {
@@ -212,36 +243,6 @@ export default function MainWorkspace() {
               </div>
             </div>
 
-            <div className="charts-row" style={{ marginTop: '1.5rem' }}>
-              <div className="info-box">
-                <h4>{t('Shaft Misalignment Comparison')}:</h4>
-                <ul style={{ listStyle: 'disc', paddingLeft: '1.2rem', margin: '0.5rem 0 0' }}>
-                  <li>{t('Benchmark CAE Target')}: <code>{tM.toFixed(2)} µm</code></li>
-                  <li>{t('Model Prediction')}: <b>{m.toFixed(2)} µm</b></li>
-                  <li>{t('Net Deviation')}: <code>{Math.abs(diffM).toFixed(2)} µm</code> ( {pctM >= 0 ? '+' : ''}{pctM.toFixed(2)}% )</li>
-                  <li>{t('Accuracy Assessment')}: {Math.abs(pctM) <= 10 ? '✅ ' + t('High Accuracy') : Math.abs(pctM) <= 20 ? '⚠️ ' + t('Moderate Accuracy') : '❌ ' + t('Low Accuracy')}</li>
-                </ul>
-              </div>
-              <div className="info-box">
-                <h4>{t('Transmission Error Comparison')}:</h4>
-                <ul style={{ listStyle: 'disc', paddingLeft: '1.2rem', margin: '0.5rem 0 0' }}>
-                  <li>{t('Benchmark CAE Target')}: <code>{tTE.toFixed(3)} µm</code></li>
-                  <li>{t('Model Prediction')}: <b>{te.toFixed(3)} µm</b></li>
-                  <li>{t('Net Deviation')}: <code>{Math.abs(diffTE).toFixed(3)} µm</code> ( {pctTE >= 0 ? '+' : ''}{pctTE.toFixed(2)}% )</li>
-                  <li>{t('Accuracy Assessment')}: {Math.abs(pctTE) <= 10 ? '✅ ' + t('High Accuracy') : Math.abs(pctTE) <= 20 ? '⚠️ ' + t('Moderate Accuracy') : '❌ ' + t('Low Accuracy')}</li>
-                </ul>
-              </div>
-              <div className="info-box">
-                <h4>{t('Radiated Noise Level Comparison')}:</h4>
-                <ul style={{ listStyle: 'disc', paddingLeft: '1.2rem', margin: '0.5rem 0 0' }}>
-                  <li>{t('Benchmark CAE Target')}: <code>{tS.toFixed(2)} dB</code></li>
-                  <li>{t('Model Prediction')}: <b>{s.toFixed(2)} dB</b></li>
-                  <li>{t('Net Deviation')}: <code>{Math.abs(diffS).toFixed(2)} dB</code> ( {pctS >= 0 ? '+' : ''}{pctS.toFixed(2)}% )</li>
-                  <li>{t('Accuracy Assessment')}: {Math.abs(pctS) <= 10 ? '✅ ' + t('High Accuracy') : Math.abs(pctS) <= 20 ? '⚠️ ' + t('Moderate Accuracy') : '❌ ' + t('Low Accuracy')}</li>
-                </ul>
-              </div>
-            </div>
-
             <hr />
             <h2>📋 {t('Output Summary Table (Engineering Report Format)')}</h2>
             <div className="table-wrapper">
@@ -335,10 +336,14 @@ export default function MainWorkspace() {
             </div>
 
             <hr />
-            <h2>📥 {t('Export Engineering Reports & CAE Data')}</h2>
+            <h2>📥 {t('Export Engineering Reports & Benchmark Archival')}</h2>
+            {saveSuccessMsg && <div className="success-box">{saveSuccessMsg}</div>}
             <div className="btn-row">
               <button className="export-btn" onClick={exportJSON}>💾 {t('Download CAE Sign-Off Deck (JSON)')}</button>
               <button className="export-btn" onClick={exportExcel}>📊 {t('Download Output Report (Excel .xlsx)')}</button>
+              <button className="primary-btn" style={{ marginTop: 0 }} onClick={saveAsBenchmark} disabled={savingCase}>
+                ➕ {savingCase ? t('Saving...') : t('Save as Benchmark Case')}
+              </button>
             </div>
           </>
         )}
@@ -347,8 +352,6 @@ export default function MainWorkspace() {
   }
 
   // === Scenario 1: Optimization Mode ===
-
-  // Readable parameter name map for sensitivity table
   const paramNameMap = {
     'b': 'Face Width (b)',
     'Cbeta': 'Flank Crowning (Cβ)',
@@ -358,7 +361,6 @@ export default function MainWorkspace() {
     'mn': 'Normal Module (mn)',
   };
 
-  // Readable param names for optimization result
   const optParamLabels = {
     'mn': 'Normal Module (mn)',
     'z1': 'Pinion Teeth (z1)',
@@ -379,23 +381,10 @@ export default function MainWorkspace() {
     'T1': 'Nm', 'n1': 'rpm', 'Calpha': 'µm', 'Cbeta': 'µm', 'Q': '', 'K_A': '', 'i': '',
   };
 
-  const fmtSens = (val, unit) => {
-    const sign = val >= 0 ? '+' : '';
-    return `${sign}${val.toFixed(3)} µm/${unit}`;
-  };
-  const fmtSensTE = (val, unit) => {
-    const sign = val >= 0 ? '+' : '';
-    return `${sign}${val.toFixed(3)} µm/${unit}`;
-  };
-  const fmtSensLW = (val, unit) => {
-    const sign = val >= 0 ? '+' : '';
-    return `${sign}${val.toFixed(3)} dB/${unit}`;
-  };
-  const fmtReq = (val, unit) => {
-    if (val == null) return 'N/A';
-    const sign = val >= 0 ? '+' : '';
-    return `${sign}${val.toFixed(2)} ${unit}`;
-  };
+  const fmtSens = (val, unit) => `${val >= 0 ? '+' : ''}${val.toFixed(3)} µm/${unit}`;
+  const fmtSensTE = (val, unit) => `${val >= 0 ? '+' : ''}${val.toFixed(3)} µm/${unit}`;
+  const fmtSensLW = (val, unit) => `${val >= 0 ? '+' : ''}${val.toFixed(3)} dB/${unit}`;
+  const fmtReq = (val, unit) => val == null ? 'N/A' : `${val >= 0 ? '+' : ''}${val.toFixed(2)} ${unit}`;
 
   return (
     <div className="page">
@@ -495,12 +484,6 @@ export default function MainWorkspace() {
               </table>
             </div>
           )}
-
-          {sensData && (
-            <div className="guide-note" style={{ marginTop: '1.5rem' }}>
-              <strong>💡 {t('How to read this table')}:</strong> {t('"Sensitivity to M" shows how much M changes per unit change in that parameter (∂M/∂p). "Req. Shift for ΔM" shows how much that parameter must change to achieve your target ΔM. N/A means the parameter has zero or negligible sensitivity.')}
-            </div>
-          )}
         </div>
       )}
 
@@ -517,7 +500,6 @@ export default function MainWorkspace() {
                 <input type="number" value={targetM} step={1} onChange={e => setTargetM(+e.target.value)} />
                 <button className="stepper-btn" onClick={() => setTargetM(v => v + 1)}>+</button>
               </div>
-              <div className="input-hint">{t('Feasible range')}: 20 – 100 µm</div>
             </div>
             <div className="form-section">
               <label>{t('Target Transmission Error STE [µm]')}</label>
@@ -526,7 +508,6 @@ export default function MainWorkspace() {
                 <input type="number" value={targetTE} step={0.05} onChange={e => setTargetTE(+e.target.value)} />
                 <button className="stepper-btn" onClick={() => setTargetTE(v => +(v + 0.05).toFixed(2))}>+</button>
               </div>
-              <div className="input-hint">{t('Feasible range')}: 0.50 – 2.50 µm (EV ≤ 1.50)</div>
             </div>
             <div className="form-section">
               <label>{t('Target Noise Level LW [dB]')}</label>
@@ -535,7 +516,6 @@ export default function MainWorkspace() {
                 <input type="number" value={targetSound} step={0.5} onChange={e => setTargetSound(+e.target.value)} />
                 <button className="stepper-btn" onClick={() => setTargetSound(v => +(v + 0.5).toFixed(1))}>+</button>
               </div>
-              <div className="input-hint">{t('Feasible range')}: 50 – 70 dB (Cabin ≤ 60)</div>
             </div>
           </div>
           <button className="primary-btn" onClick={runOptimization} disabled={optLoading}>
@@ -578,7 +558,6 @@ export default function MainWorkspace() {
                     <li>{t('Target')}: <code>{targetM} µm</code></li>
                     <li>{t('Achieved')}: <b>{optResult.achieved.M} µm</b></li>
                     <li>{t('Deviation')}: <code>{(optResult.achieved.M - targetM).toFixed(2)} µm</code></li>
-                    <li>{Math.abs(optResult.achieved.M - targetM) <= 6.0 ? <span className="zone-pass">✅ {t('Within Tolerance')}</span> : <span className="zone-fail">⚠️ {t('Review Required')}</span>}</li>
                   </ul>
                 </div>
                 <div className="info-box">
@@ -587,7 +566,6 @@ export default function MainWorkspace() {
                     <li>{t('Target')}: <code>{targetTE} µm</code></li>
                     <li>{t('Achieved')}: <b>{optResult.achieved.STE} µm</b></li>
                     <li>{t('Deviation')}: <code>{(optResult.achieved.STE - targetTE).toFixed(3)} µm</code></li>
-                    <li>{Math.abs(optResult.achieved.STE - targetTE) <= 0.35 ? <span className="zone-pass">✅ {t('Within Tolerance')}</span> : <span className="zone-fail">⚠️ {t('Review Required')}</span>}</li>
                   </ul>
                 </div>
                 <div className="info-box">
@@ -596,7 +574,6 @@ export default function MainWorkspace() {
                     <li>{t('Target')}: <code>{targetSound} dB</code></li>
                     <li>{t('Achieved')}: <b>{optResult.achieved.Sound} dB</b></li>
                     <li>{t('Deviation')}: <code>{(optResult.achieved.Sound - targetSound).toFixed(2)} dB</code></li>
-                    <li>{Math.abs(optResult.achieved.Sound - targetSound) <= 2.5 ? <span className="zone-pass">✅ {t('Within Tolerance')}</span> : <span className="zone-fail">⚠️ {t('Review Required')}</span>}</li>
                   </ul>
                 </div>
               </div>

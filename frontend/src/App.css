@@ -94,7 +94,11 @@
   --speed: 0.18s;
 }
 
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
 
 body {
   font-family: var(--font-sans);
@@ -128,7 +132,6 @@ body {
   font-weight: 800; font-size: 11px; color: white;
   letter-spacing: -0.3px;
 }
-.header-titles {}
 .header-title {
   font-size: 0.88rem; font-weight: 700;
   color: var(--text-primary);
@@ -293,9 +296,7 @@ body {
 }
 .settings-close:hover { color: var(--text-primary); }
 
-.settings-group {
-  margin-bottom: 1.25rem;
-}
+.settings-group { margin-bottom: 1.25rem; }
 .settings-group-label {
   font-size: 0.68rem; font-weight: 600;
   color: var(--text-muted); text-transform: uppercase;
@@ -572,6 +573,167 @@ hr {
 .chip.selected {
   background: var(--accent-dim); color: var(--accent-text);
   border-color: rgba(45, 127, 249, 0.3); font-weight: 600;
+}
+
+/* ===== CHIP HOVER TOOLTIP ===== */
+.chip-wrapper {
+  position: relative;
+  display: inline-block;
+}
+
+.chip-tooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-card);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-family: var(--font-sans);
+  font-size: 0.74rem;
+  color: var(--text-primary);
+  white-space: nowrap;
+  box-shadow: var(--shadow-lg);
+  pointer-events: none;
+  z-index: 1000;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.chip-tooltip::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  border-width: 5px;
+  border-style: solid;
+  border-color: var(--accent) transparent transparent transparent;
+}
+
+.chip-tooltip-title {
+  font-weight: 700;
+  color: var(--accent-text);
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 2px;
+}
+
+.chip-tooltip-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px 12px;
+  font-family: var(--font-mono);
+}
+
+/* ===== CUSTOM CASE SELECT DROPDOWN WITH HOVER TOOLTIP ===== */
+.custom-select-container {
+  position: relative;
+  width: 100%;
+}
+
+.custom-select-trigger {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: all var(--speed) var(--ease);
+}
+
+.custom-select-trigger:hover,
+.custom-select-container.open .custom-select-trigger {
+  border-color: var(--accent);
+}
+
+.custom-select-arrow {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  transition: transform var(--speed) var(--ease);
+}
+
+.custom-select-container.open .custom-select-arrow {
+  transform: rotate(180deg);
+}
+
+.custom-select-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  width: 100%;
+  max-height: 260px;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  z-index: 1050;
+}
+
+.custom-select-menu::-webkit-scrollbar {
+  width: 5px;
+}
+.custom-select-menu::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+.custom-select-option {
+  padding: 8px 12px;
+  font-size: 0.8rem;
+  font-family: var(--font-sans);
+  color: var(--text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: all 0.12s ease;
+}
+
+.custom-select-option:hover {
+  background: var(--accent-dim);
+  color: var(--accent-text);
+  font-weight: 600;
+}
+
+.custom-select-option.selected {
+  background: var(--glass);
+  color: var(--accent-text);
+  font-weight: 700;
+}
+
+/* Floating tooltip card displayed right beside the dropdown menu */
+.custom-select-preview-card {
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 0;
+  min-width: 200px;
+  background: var(--bg-card);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-family: var(--font-sans);
+  font-size: 0.74rem;
+  color: var(--text-primary);
+  box-shadow: var(--shadow-lg);
+  pointer-events: none;
+  z-index: 1100;
+  animation: fadeIn 0.15s ease-out;
+}
+
+@media (max-width: 1200px) {
+  .custom-select-preview-card {
+    left: auto;
+    right: 0;
+    top: calc(100% + 6px);
+  }
 }
 
 /* ===== RESPONSIVE ===== */

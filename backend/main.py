@@ -519,7 +519,11 @@ def export_excel(inp: DesignInput):
 
 @app.get("/api/case-ids")
 def case_ids():
-    return df['id'].tolist()
+    """Return all case IDs with their 6 primary input parameters for UI hover cards."""
+    cols = ['id', 'mn', 'z1', 'z2', 'beta', 'b', 'T1', 'n1']
+    available_cols = [c for c in cols if c in df.columns]
+    records = df[available_cols].to_dict(orient="records")
+    return records
 
 
 # ---------------------------------------------------------------------------
@@ -549,6 +553,81 @@ def translate_status():
         }
     except Exception as e:
         return {"available": False, "error": str(e)}
+
+from datetime import datetime
+
+class AddCaseRequest(BaseModel):
+    params: DesignInput
+    targets: Optional[dict] = None  # Optional: {"Mtrue": ..., "TEtrue": ..., "Sound": ...}
+
+@app.post("/api/case/add")
+def add_case(req: AddCaseRequest):
+    """Dynamically & permanently add a new benchmark case (e.g. #101) to CSV and memory."""
+    global df, df_eval
+    
+    d = req.params.model_dump()
+    if d.get('i') is None:
+        d['i'] = round(d['z2'] / d['z1'], 2)
+    
+    # Calculate physics and model predictions
+    m, te, s, phys = predict_from_inputs(d, template_id=req.params.template_id)
+    
+    # Auto-assign next sequential ID (e.g., 101)
+    next_id = int(df['id'].max()) + 1 if not df.empty else 1
+    
+    # Prepare row matching dataset schema
+    new_row = dict(phys)
+    new_row['id'] = next_id
+    
+    # Use provided true targets if given; otherwise fallback to model prediction
+    if req.targets:
+        new_row['Mtrue'] = float(req.targets.get('Mtrue', m))
+        new_row['TEtrue'] = float(req.targets.get('TEtrue', te))
+        new_row['Sound'] = float(req.targets.get('Sound', s))
+    else:
+        new_row['Mtrue'] = round(m, 2)
+        new_row['TEtrue'] = round(te, 3)
+        new_row['Sound'] = round(s, 2)
+        
+    new_row['Pred_M'] = round(m, 4)
+    new_row['Pred_STE'] = round(te, 4)
+    new_row['Pred_Sound'] = round(s, 4)
+    new_row['created_at'] = datetime.utcnow().isoformat()
+    
+    # Build single-row DataFrame aligned with df columns
+    row_df = pd.DataFrame([new_row])
+    for col in df.columns:
+        if col not in row_df.columns:
+            row_df[col] = df[col].iloc[0] if not df.empty else 0
+    row_df = row_df[df.columns]
+    
+    # 1. Update in-memory state
+    df = pd.concat([df, row_df], ignore_index=True)
+    
+    eval_row = row_df.copy()
+    eval_row['Pred_M'] = round(m, 4)
+    eval_row['Pred_STE'] = round(te, 4)
+    eval_row['Pred_Sound'] = round(s, 4)
+    df_eval = pd.concat([df_eval, eval_row], ignore_index=True)
+    
+    # 2. Permanent persistence to CSV
+    csv_path = "data/SYNTHETIC_DATASET_100_CLEANED.csv"
+    df.to_csv(csv_path, index=False)
+    
+    return {
+        "status": "success",
+        "message": f"Case #{next_id} added successfully",
+        "id": next_id,
+        "case": {
+            "params": d,
+            "targets": {
+                "id": next_id,
+                "Mtrue": new_row['Mtrue'],
+                "TEtrue": new_row['TEtrue'],
+                "Sound": new_row['Sound']
+            }
+        }
+    }
 
 
 if __name__ == "__main__":
