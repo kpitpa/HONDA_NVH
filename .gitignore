@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+venv/
+.venv/
+backend/models.zip
+# Node / Frontend
+node_modules/
+dist/
+.vite/
+
+# MarianMT translation models (~600MB) — run `python download_models.py` to fetch
+backend/models/
+
+# Environment
+.env
+*.log

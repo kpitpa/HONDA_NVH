@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+pandas
+numpy
+scikit-learn
+scipy
+transformers
+sentencepiece
+torch
+openpyxl
+sacremoses
