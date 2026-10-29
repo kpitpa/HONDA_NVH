@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # NVH Helix Gear — Setup Guide
 
 ## Prerequisites
@@ -24,3 +25,7 @@ cd frontend
 npm install
 npm run dev
 ```
+=======
+# HONDA_NVH
+PROJECT FOR HONDA NVH PREDICTION
+>>>>>>> origin/main
