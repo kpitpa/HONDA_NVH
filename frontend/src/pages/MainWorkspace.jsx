@@ -172,7 +172,7 @@ export default function MainWorkspace() {
     }
   };
 
-const renderLabelWithDiagram = (paramKey, labelText, position = 'top') => (
+  const renderLabelWithDiagram = (paramKey, labelText, position = 'top') => (
     <div
       className="param-label-wrapper"
       onMouseEnter={() => setHoveredParam(paramKey)}
@@ -571,13 +571,13 @@ const renderLabelWithDiagram = (paramKey, labelText, position = 'top') => (
 
           {sensData && (
             <>
-              {/* TABLE 1: CAUSE-AND-EFFECT ACTION RECOMMENDATION TABLE */}
+              {/* ENGINEERING IMPACT SUMMARY BANNER */}
               <div className="exec-summary-box" style={{ marginTop: '2rem', borderLeftColor: '#38BDF8' }}>
                 <div className="exec-summary-title" style={{ color: '#38BDF8' }}>
                   🎯 {t('Engineering Impact Summary')}:
                 </div>
                 <div style={{ fontSize: '0.86rem', color: 'var(--text-primary)', lineHeight: 1.6 }}>
-                  To achieve your specified NVH performance change:
+                  Active NVH Targets being optimized:
                   <ul style={{ listStyle: 'disc', paddingLeft: '1.25rem', marginTop: '0.35rem' }}>
                     <li>
                       <strong>Shaft Misalignment (ΔM):</strong> <code>{deltaM !== 0 ? `${deltaM > 0 ? '+' : ''}${deltaM} µm` : '0.00 µm (Unchanged)'}</code>
@@ -589,15 +589,15 @@ const renderLabelWithDiagram = (paramKey, labelText, position = 'top') => (
                       <strong>Radiated Noise (ΔLW):</strong> <code>{deltaSound !== 0 ? `${deltaSound > 0 ? '+' : ''}${deltaSound} dB` : '0.00 dB (Unchanged)'}</code>
                     </li>
                   </ul>
-                  The parameters below require adjustment to fulfill these deltas:
                 </div>
               </div>
 
-              <h3 style={{ marginTop: '1.75rem' }}>
-                📋 {t('Required Design Parameter Adjustments for Target Shift')}
+              {/* UNIFIED SINGLE-TABLE: AUTOMOTIVE NVH TARGET TRADE-OFF & SENSITIVITY MATRIX */}
+              <h3 style={{ marginTop: '2rem' }}>
+                📋 {t('Automotive NVH Target Trade-Off & Parameter Sensitivity Matrix')}
               </h3>
               <p className="subtitle">
-                {t('Showing how much each design parameter is impacted to satisfy your non-zero target changes:')}
+                Unified design synthesis table integrating parameter bounds, physics coupling mechanisms, partial derivatives, and recommended shifts:
               </p>
               
               <div className="table-wrapper">
@@ -607,16 +607,19 @@ const renderLabelWithDiagram = (paramKey, labelText, position = 'top') => (
                       <th>#</th>
                       <th>{t('Design Parameter')}</th>
                       <th>{t('Baseline Value')}</th>
-                      <th>{t('Target Output Impacted')}</th>
-                      <th>{t('Required Shift')} (Δ)</th>
-                      <th>{t('Relative Change')} (%)</th>
+                      <th>{t('Valid Design Envelope')}</th>
+                      <th>{t('Coupled NVH Mechanism')}</th>
+                      <th>{t('Sensitivity (∂Y/∂X)')}</th>
+                      <th>{t('Required Shift (Δ)')}</th>
+                      <th>{t('Relative Change (%)')}</th>
                       <th>{t('Recommended Target Value')}</th>
                       <th>{t('Design Feasibility')}</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {sensData.action_rows.map((r, i) => {
+                    {sensData.rows.map((r, i) => {
                       const isActive = r.is_target_active;
+                      const hasShift = r.req_shift !== null;
                       const sign = r.req_shift >= 0 ? '+' : '';
                       const pctSign = r.pct_change >= 0 ? '+' : '';
 
@@ -631,25 +634,33 @@ const renderLabelWithDiagram = (paramKey, labelText, position = 'top') => (
                           <td>{i}</td>
                           <td><strong>{t(r.param)}</strong></td>
                           <td>{r.current} {r.unit}</td>
-                          <td>
-                            <code style={{ color: isActive ? '#38BDF8' : 'var(--text-muted)' }}>
-                              {r.target_metric}
-                            </code>
+                          <td><code>{r.envelope}</code></td>
+                          <td style={{ fontSize: '0.74rem', color: 'var(--text-secondary)' }}>
+                            {t(r.coupling)}
                           </td>
-                          <td style={{ color: isActive ? (r.req_shift > 0 ? '#38BDF8' : '#F59E0B') : 'var(--text-muted)', fontWeight: isActive ? 700 : 400 }}>
-                            {isActive ? (r.req_shift !== null ? `${sign}${r.req_shift} ${r.unit}` : '—') : '0.00 (No Change Needed)'}
+                          <td style={{ fontFamily: 'var(--font-mono)' }}>
+                            {r.sensitivity >= 0 ? '+' : ''}{r.sensitivity.toFixed(3)} {r.sens_unit}
                           </td>
-                          <td style={{ color: isActive ? (r.pct_change > 0 ? '#38BDF8' : '#F59E0B') : 'var(--text-muted)', fontWeight: isActive ? 700 : 400 }}>
-                            {isActive ? (r.pct_change !== null ? `${pctSign}${r.pct_change}%` : '—') : '0.00%'}
+                          <td style={{
+                            color: isActive ? (r.req_shift > 0 ? '#38BDF8' : '#F59E0B') : 'var(--text-muted)',
+                            fontWeight: isActive ? 700 : 400
+                          }}>
+                            {isActive ? (hasShift ? `${sign}${r.req_shift} ${r.unit}` : '—') : '0.00 (Unchanged)'}
+                          </td>
+                          <td style={{
+                            color: isActive ? (r.pct_change > 0 ? '#38BDF8' : '#F59E0B') : 'var(--text-muted)',
+                            fontWeight: isActive ? 700 : 400
+                          }}>
+                            {isActive ? (hasShift ? `${pctSign}${r.pct_change}%` : '0.00%') : '0.00%'}
                           </td>
                           <td>
                             <strong>{r.new_value} {r.unit}</strong>
                           </td>
                           <td>
                             {r.feasible ? (
-                              <span style={{ color: '#10B981', fontWeight: 600 }}>✅ {t('Feasible')}</span>
+                              <span style={{ color: '#10B981', fontWeight: 600 }}>{t('✅ Feasible')}</span>
                             ) : (
-                              <span style={{ color: '#EF4444', fontWeight: 600 }}>⚠️ {t('Exceeds Bounds')}</span>
+                              <span style={{ color: '#EF4444', fontWeight: 600 }}>{t('⚠️ Exceeds Envelope')}</span>
                             )}
                           </td>
                         </tr>
@@ -659,48 +670,8 @@ const renderLabelWithDiagram = (paramKey, labelText, position = 'top') => (
                 </table>
               </div>
 
-              {/* TABLE 2: TECHNICAL REFERENCE PARTIAL DERIVATIVE MATRIX */}
-              <h3 style={{ marginTop: '2.5rem' }}>
-                🧮 {t('Full 12-Parameter Partial Derivative & Shift Matrix (Engineering Reference)')}
-              </h3>
-              <p className="subtitle">
-                {t('Detailed sensitivity derivatives (∂Y/∂X) and exact shifts required for each target individually:')}
-              </p>
-              <div className="table-wrapper">
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>#</th>
-                      <th>{t('Gear Parameter')}</th>
-                      <th>{t('Current Value')}</th>
-                      <th>{t('Sensitivity to M')}</th>
-                      <th>{t('Req. Shift for ΔM')}</th>
-                      <th>{t('Sensitivity to STE')}</th>
-                      <th>{t('Req. Shift for ΔSTE')}</th>
-                      <th>{t('Sensitivity to Noise')}</th>
-                      <th>{t('Req. Shift for ΔNoise')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sensData.matrix_rows.map((r, i) => (
-                      <tr key={r.key}>
-                        <td>{i}</td>
-                        <td><strong>{t(r.param)}</strong></td>
-                        <td>{r.current} {r.unit}</td>
-                        <td>{r.sens_M >= 0 ? '+' : ''}{r.sens_M.toFixed(3)} µm/{r.unit || 'unit'}</td>
-                        <td>{r.req_M != null ? (r.req_M === 0 ? '0.00 (Unchanged)' : `${r.req_M >= 0 ? '+' : ''}${r.req_M} ${r.unit}`) : 'N/A'}</td>
-                        <td>{r.sens_TE >= 0 ? '+' : ''}{r.sens_TE.toFixed(3)} µm/{r.unit || 'unit'}</td>
-                        <td>{r.req_TE != null ? (r.req_TE === 0 ? '0.00 (Unchanged)' : `${r.req_TE >= 0 ? '+' : ''}${r.req_TE} ${r.unit}`) : 'N/A'}</td>
-                        <td>{r.sens_Sound >= 0 ? '+' : ''}{r.sens_Sound.toFixed(3)} dB/{r.unit || 'unit'}</td>
-                        <td>{r.req_Sound != null ? (r.req_Sound === 0 ? '0.00 (Unchanged)' : `${r.req_Sound >= 0 ? '+' : ''}${r.req_Sound} ${r.unit}`) : 'N/A'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
               <div className="guide-note" style={{ marginTop: '1.5rem' }}>
-                <strong>💡 {t('How to read this table')}:</strong> {t('"Sensitivity" shows how much the NVH metric changes per unit change in that parameter (∂Y/∂X). "Req. Shift" shows how much that parameter must move to achieve your specific delta. If a target delta is 0.0, the required shift is 0.00.')}
+                <strong>💡 {t('How to read this table')}:</strong> {t('"Sensitivity (∂Y/∂X)" demonstrates the gradient rate of change for the active target metric per unit parameter shift. "Valid Design Envelope" outlines strict structural and packaging limits. When an adjustment pushes a parameter outside its envelope, it flags "Exceeds Envelope", advising you to redistribute the design shift across secondary coupled parameters (e.g., using micro-geometry Crowning Cβ rather than impossible tooth counts).')}
               </div>
             </>
           )}

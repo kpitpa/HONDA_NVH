@@ -13,11 +13,10 @@ from scipy.optimize import minimize
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
-import json
 import io
 from translator import translate, translate_batch
 
-app = FastAPI(title="NVH Helix Gear API", version="6.3")
+app = FastAPI(title="NVH Helix Gear API", version="6.4")
 
 app.add_middleware(
     CORSMiddleware,
@@ -167,7 +166,7 @@ def get_dataset():
 
 @app.get("/api/case/{case_id}")
 def get_case(case_id: int):
-    """Return a single benchmark case's input parameters + targets."""
+    """Return a single benchmark case input parameters + targets."""
     row = df[df['id'] == case_id]
     if row.empty:
         return {"error": "Case not found"}
@@ -310,7 +309,10 @@ def optimize(targets: OptimizationTargets):
 
 @app.post("/api/sensitivity")
 def sensitivity(req: SensitivityRequest):
-    """12-Parameter Sensitivity Analysis supporting zero deltas and custom baselines."""
+    """
+    Unified 12-Parameter Sensitivity Analysis & Trade-Off Matrix.
+    Provides verified engineering envelopes and explicit physics coupling mechanisms.
+    """
     d = req.inputs.model_dump()
     if d.get('i') is None:
         d['i'] = round(d['z2'] / d['z1'], 2)
@@ -321,30 +323,78 @@ def sensitivity(req: SensitivityRequest):
     base_te = req.custom_baseline_TE if req.custom_baseline_TE is not None else calc_te
     base_s = req.custom_baseline_Sound if req.custom_baseline_Sound is not None else calc_s
 
+    # Complete 12-parameter technical registry
     sens_defs = [
-        {'param': 'Normal Module (mn)', 'key': 'mn', 'unit': 'mm', 'step': 0.10, 'bounds': (1.0, 5.0), 'target_for_action': 'STE'},
-        {'param': 'Pinion Teeth (z1)', 'key': 'z1', 'unit': 'teeth', 'step': 1.0, 'bounds': (14, 45), 'target_for_action': 'STE'},
-        {'param': 'Wheel Teeth (z2)', 'key': 'z2', 'unit': 'teeth', 'step': 1.0, 'bounds': (50, 180), 'target_for_action': 'STE'},
-        {'param': 'Helix Angle (beta)', 'key': 'beta', 'unit': 'deg', 'step': 1.0, 'bounds': (10.0, 45.0), 'target_for_action': 'Noise'},
-        {'param': 'Face Width (b)', 'key': 'b', 'unit': 'mm', 'step': 1.5, 'bounds': (15.0, 70.0), 'target_for_action': 'M'},
-        {'param': 'Input Torque (T1)', 'key': 'T1', 'unit': 'Nm', 'step': 5.0, 'bounds': (10.0, 350.0), 'target_for_action': 'M'},
-        {'param': 'Pinion Speed (n1)', 'key': 'n1', 'unit': 'rpm', 'step': 200.0, 'bounds': (3000.0, 18000.0), 'target_for_action': 'Noise'},
-        {'param': 'Application Factor (KA)', 'key': 'K_A', 'unit': '', 'step': 0.05, 'bounds': (1.0, 2.0), 'target_for_action': 'M'},
-        {'param': 'Tip Relief (Calpha)', 'key': 'Calpha', 'unit': 'µm', 'step': 1.0, 'bounds': (2.0, 25.0), 'target_for_action': 'STE'},
-        {'param': 'Flank Crowning (Cbeta)', 'key': 'Cbeta', 'unit': 'µm', 'step': 1.0, 'bounds': (2.0, 25.0), 'target_for_action': 'STE'},
-        {'param': 'ISO Quality Grade (Q)', 'key': 'Q', 'unit': 'grade', 'step': 1.0, 'bounds': (4, 10), 'target_for_action': 'STE'},
-        {'param': 'Pressure Angle (alpha)', 'key': 'alpha', 'unit': 'deg', 'step': 1.0, 'bounds': (14.5, 25.0), 'target_for_action': 'STE'},
+        {
+            'param': 'Face Width (b)', 'key': 'b', 'unit': 'mm', 'step': 1.5,
+            'bounds': (15.0, 70.0), 'is_discrete': False, 'target_for_action': 'M',
+            'coupling': 'Directly governs specific line load wt and shaft span deflection resistance'
+        },
+        {
+            'param': 'Flank Crowning (Cbeta)', 'key': 'Cbeta', 'unit': 'µm', 'step': 1.0,
+            'bounds': (2.0, 25.0), 'is_discrete': False, 'target_for_action': 'STE',
+            'coupling': 'Compensates for longitudinal tooth end-loading and misalignment tilt'
+        },
+        {
+            'param': 'Tip Relief (Calpha)', 'key': 'Calpha', 'unit': 'µm', 'step': 1.0,
+            'bounds': (2.0, 25.0), 'is_discrete': False, 'target_for_action': 'STE',
+            'coupling': 'Eliminates corner contact impact during meshing entry under torsional deflection'
+        },
+        {
+            'param': 'Helix Angle (beta)', 'key': 'beta', 'unit': 'deg', 'step': 1.0,
+            'bounds': (10.0, 45.0), 'is_discrete': False, 'target_for_action': 'Noise',
+            'coupling': 'Increases contact ratio (overlap) to damp high-frequency acoustic radiation'
+        },
+        {
+            'param': 'Input Torque (T1)', 'key': 'T1', 'unit': 'Nm', 'step': 5.0,
+            'bounds': (10.0, 350.0), 'is_discrete': False, 'target_for_action': 'M',
+            'coupling': 'Source of tangential tooth force Ft causing bending and housing deflection'
+        },
+        {
+            'param': 'Pinion Speed (n1)', 'key': 'n1', 'unit': 'rpm', 'step': 200.0,
+            'bounds': (3000.0, 18000.0), 'is_discrete': False, 'target_for_action': 'Noise',
+            'coupling': 'Governs fundamental mesh excitation frequency fm = (n1 × z1) / 60'
+        },
+        {
+            'param': 'Normal Module (mn)', 'key': 'mn', 'unit': 'mm', 'step': 0.10,
+            'bounds': (1.0, 5.0), 'is_discrete': False, 'target_for_action': 'STE',
+            'coupling': 'Fundamental tooth size; alters tooth compliance and bending stiffness'
+        },
+        {
+            'param': 'Pinion Teeth (z1)', 'key': 'z1', 'unit': 'teeth', 'step': 1.0,
+            'bounds': (14, 45), 'is_discrete': True, 'target_for_action': 'STE',
+            'coupling': 'Discrete gear kinematic constraint; sets mesh frequency and contact ratio'
+        },
+        {
+            'param': 'Wheel Teeth (z2)', 'key': 'z2', 'unit': 'teeth', 'step': 1.0,
+            'bounds': (50, 180), 'is_discrete': True, 'target_for_action': 'STE',
+            'coupling': 'Discrete driven tooth count; locks center distance and overall ratio i'
+        },
+        {
+            'param': 'Application Factor (KA)', 'key': 'K_A', 'unit': '', 'step': 0.05,
+            'bounds': (1.0, 2.0), 'is_discrete': False, 'target_for_action': 'M',
+            'coupling': 'Service overload allowance factor accounting for drivetrain shock ripples'
+        },
+        {
+            'param': 'ISO Quality Grade (Q)', 'key': 'Q', 'unit': 'grade', 'step': 1.0,
+            'bounds': (4, 10), 'is_discrete': True, 'target_for_action': 'STE',
+            'coupling': 'Flank tolerance band (ISO 1328); lower grade reduces cumulative pitch error'
+        },
+        {
+            'param': 'Pressure Angle (alpha)', 'key': 'alpha', 'unit': 'deg', 'step': 1.0,
+            'bounds': (14.5, 25.0), 'is_discrete': False, 'target_for_action': 'STE',
+            'coupling': 'Governs radial separating force and contact pressure distribution along involute'
+        },
     ]
 
-    action_rows = []
-    matrix_rows = []
+    tradeoff_rows = []
 
     for s in sens_defs:
         k = s['key']
         cur_val = float(d.get(k, 20.0 if k == 'alpha' else 1.0))
         inp_pert = dict(d)
         inp_pert[k] = cur_val + s['step']
-        if k in ('z1', 'z2', 'Q'):
+        if s['is_discrete']:
             inp_pert[k] = int(round(inp_pert[k]))
             
         m_p, te_p, s_p, _ = predict_from_inputs(inp_pert, template_id=req.inputs.template_id)
@@ -352,28 +402,44 @@ def sensitivity(req: SensitivityRequest):
         dTE = (te_p - calc_te) / s['step']
         dS = (s_p - calc_s) / s['step']
 
+        # Map to active target metric
         target_name = s['target_for_action']
         if target_name == 'M':
             req_delta = req.delta_M
             deriv = dM
-            target_metric_label = f"ΔM ({req.delta_M:+.2f} µm)" if req.delta_M != 0 else "ΔM (0.00 µm — Unchanged)"
+            target_metric_label = f"Shaft Misalignment (ΔM = {req.delta_M:+.2f} µm)" if req.delta_M != 0 else "Shaft Misalignment (ΔM = 0.00 — Unchanged)"
             is_active = (req.delta_M != 0)
+            sens_val = dM
+            sens_unit_str = f"µm/{s['unit']}" if s['unit'] else "µm/unit"
         elif target_name == 'STE':
             req_delta = req.delta_TE
             deriv = dTE
-            target_metric_label = f"ΔSTE ({req.delta_TE:+.2f} µm)" if req.delta_TE != 0 else "ΔSTE (0.00 µm — Unchanged)"
+            target_metric_label = f"Transmission Error (ΔSTE = {req.delta_TE:+.2f} µm)" if req.delta_TE != 0 else "Transmission Error (ΔSTE = 0.00 — Unchanged)"
             is_active = (req.delta_TE != 0)
+            sens_val = dTE
+            sens_unit_str = f"µm/{s['unit']}" if s['unit'] else "µm/unit"
         else:
             req_delta = req.delta_Sound
             deriv = dS
-            target_metric_label = f"ΔLW ({req.delta_Sound:+.2f} dB)" if req.delta_Sound != 0 else "ΔLW (0.00 dB — Unchanged)"
+            target_metric_label = f"Sound Power Level (ΔLW = {req.delta_Sound:+.2f} dB)" if req.delta_Sound != 0 else "Sound Power Level (ΔLW = 0.00 — Unchanged)"
             is_active = (req.delta_Sound != 0)
+            sens_val = dS
+            sens_unit_str = f"dB/{s['unit']}" if s['unit'] else "dB/unit"
 
+        b_min, b_max = s['bounds']
+        range_str = f"{b_min} – {b_max} {s['unit']}".strip()
+
+        # Shift computation with discrete bounds protection
         if is_active and abs(deriv) > 1e-5:
             req_shift = req_delta / deriv
-            pct_change = (req_shift / cur_val * 100.0) if cur_val != 0 else 0.0
             new_val = cur_val + req_shift
-            b_min, b_max = s['bounds']
+            
+            # For discrete teeth/grades, check viability
+            if s['is_discrete']:
+                req_shift = round(req_shift)
+                new_val = int(round(new_val))
+                
+            pct_change = (req_shift / cur_val * 100.0) if cur_val != 0 else 0.0
             is_feasible = (b_min <= new_val <= b_max)
         else:
             req_shift = 0.0 if not is_active else None
@@ -381,36 +447,30 @@ def sensitivity(req: SensitivityRequest):
             new_val = cur_val
             is_feasible = True
 
-        action_rows.append({
+        tradeoff_rows.append({
             'param': s['param'],
             'key': k,
             'current': cur_val,
             'unit': s['unit'],
+            'envelope': range_str,
+            'coupling': s['coupling'],
             'target_metric': target_metric_label,
             'is_target_active': is_active,
+            'sensitivity': round(sens_val, 4),
+            'sens_unit': sens_unit_str,
             'req_shift': round(req_shift, 3) if req_shift is not None else None,
             'pct_change': round(pct_change, 2) if pct_change is not None else None,
-            'new_value': round(new_val, 3),
+            'new_value': round(new_val, 3) if not s['is_discrete'] else int(new_val),
             'feasible': is_feasible,
-        })
-
-        matrix_rows.append({
-            'param': s['param'],
-            'key': k,
-            'current': cur_val,
-            'unit': s['unit'],
+            # Derivative details for multi-target inspection
             'sens_M': round(dM, 4),
             'sens_TE': round(dTE, 4),
             'sens_Sound': round(dS, 4),
-            'req_M': round(req.delta_M / dM, 2) if (abs(dM) > 1e-4 and req.delta_M != 0) else (0.0 if req.delta_M == 0 else None),
-            'req_TE': round(req.delta_TE / dTE, 2) if (abs(dTE) > 1e-4 and req.delta_TE != 0) else (0.0 if req.delta_TE == 0 else None),
-            'req_Sound': round(req.delta_Sound / dS, 2) if (abs(dS) > 1e-4 and req.delta_Sound != 0) else (0.0 if req.delta_Sound == 0 else None),
         })
 
     return {
         "baseline": {"M": round(base_m, 2), "STE": round(base_te, 3), "Sound": round(base_s, 2)},
-        "action_rows": action_rows,
-        "matrix_rows": matrix_rows,
+        "rows": tradeoff_rows,
     }
 
 
@@ -649,7 +709,10 @@ def export_excel(inp: DesignInput):
 
 @app.get("/api/case-ids")
 def case_ids():
-    """Return all case IDs with their 6 primary input parameters and NVH performance tier."""
+    """
+    Return all case IDs with their 6 primary input parameters and NVH performance tier.
+    Composite NVH Penalty: J_NVH = 0.30*M_norm + 0.40*STE_norm + 0.30*Sound_norm
+    """
     cols = ['id', 'mn', 'z1', 'z2', 'beta', 'b', 'T1', 'n1', 'Mtrue', 'TEtrue', 'Sound']
     available_cols = [c for c in cols if c in df.columns]
     sub = df[available_cols].copy()
@@ -657,7 +720,7 @@ def case_ids():
     m_norm = (sub['Mtrue'] - sub['Mtrue'].min()) / (sub['Mtrue'].max() - sub['Mtrue'].min() + 1e-6)
     te_norm = (sub['TEtrue'] - sub['TEtrue'].min()) / (sub['TEtrue'].max() - sub['TEtrue'].min() + 1e-6)
     s_norm = (sub['Sound'] - sub['Sound'].min()) / (sub['Sound'].max() - sub['Sound'].min() + 1e-6)
-    score = 0.3 * m_norm + 0.4 * te_norm + 0.3 * s_norm
+    score = 0.30 * m_norm + 0.40 * te_norm + 0.30 * s_norm
     
     q_low = score.quantile(0.15)
     q_high = score.quantile(0.85)
