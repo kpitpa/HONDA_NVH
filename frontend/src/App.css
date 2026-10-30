@@ -973,3 +973,122 @@ hr {
 @media (max-width: 768px) {
   .baseline-cards-row { grid-template-columns: 1fr; }
 }
+
+/* ===== PARAMETER SCHEMATIC HOVER CARD ===== */
+.param-label-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: help;
+  margin: 9px 0 3px;
+  width: fit-content;
+}
+
+.param-info-tag {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  font-size: 0.62rem;
+  font-family: var(--font-sans);
+  font-weight: 700;
+  background: var(--bg-card-alt);
+  border: 1px solid var(--border);
+  color: var(--accent-text);
+  transition: all 0.15s ease;
+}
+
+.param-label-wrapper:hover .param-info-tag {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.param-hover-card {
+  position: absolute;
+  left: 0;
+  width: 255px;
+  background: var(--bg-card);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 12px;
+  box-shadow: var(--shadow-lg);
+  pointer-events: none;
+  z-index: 1200;
+  animation: fadeIn 0.15s ease-out;
+}
+
+/* Default: Opened on Top */
+.param-hover-card.pos-top {
+  bottom: calc(100% + 8px);
+}
+.param-hover-card.pos-top::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 20px;
+  border-width: 6px;
+  border-style: solid;
+  border-color: var(--accent) transparent transparent transparent;
+}
+
+/* Flipped: Opened on Bottom (for top-most inputs) */
+.param-hover-card.pos-bottom {
+  top: calc(100% + 8px);
+}
+.param-hover-card.pos-bottom::after {
+  content: '';
+  position: absolute;
+  bottom: 100%;
+  left: 20px;
+  border-width: 6px;
+  border-style: solid;
+  border-color: transparent transparent var(--accent) transparent;
+}
+
+.param-card-header {
+  border-bottom: 1px solid var(--border-subtle);
+  padding-bottom: 5px;
+  margin-bottom: 8px;
+}
+
+.param-card-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-heading);
+}
+
+.param-card-badge {
+  font-size: 0.65rem;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--accent-dim);
+  color: var(--accent-text);
+  font-family: var(--font-mono);
+}
+
+.param-card-svg-viewport {
+  width: 100%;
+  height: 110px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 8px;
+}
+
+.param-card-desc {
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  line-height: 1.45;
+  font-family: var(--font-sans);
+}

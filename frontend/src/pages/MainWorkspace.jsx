@@ -4,6 +4,7 @@ import { useApp } from '../context/AppContext';
 import { useTranslate } from '../i18n';
 import api from '../api';
 import MetricCard from '../components/MetricCard';
+import ParamDiagramModal from '../components/ParamDiagramModal';
 
 function useChartColors() {
   const { theme } = useApp();
@@ -48,10 +49,20 @@ export default function MainWorkspace() {
   const [savingCase, setSavingCase] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState('');
 
+  // Active hover diagram key
+  const [hoveredParam, setHoveredParam] = useState(null);
+
   // Sensitivity state
   const [deltaM, setDeltaM] = useState(2.0);
-  const [deltaTE, setDeltaTE] = useState(0.10);
-  const [deltaSound, setDeltaSound] = useState(1.0);
+  const [deltaTE, setDeltaTE] = useState(0.0);
+  const [deltaSound, setDeltaSound] = useState(0.0);
+  
+  // Custom baseline overrides
+  const [useCustomBaseline, setUseCustomBaseline] = useState(false);
+  const [customBaseM, setCustomBaseM] = useState(35.0);
+  const [customBaseTE, setCustomBaseTE] = useState(1.10);
+  const [customBaseSound, setCustomBaseSound] = useState(54.0);
+
   const [sensData, setSensData] = useState(null);
   const [sensLoading, setSensLoading] = useState(false);
 
@@ -77,8 +88,13 @@ export default function MainWorkspace() {
         template_id: actualTargets?.id || 1,
       });
       setPrediction(r.data);
+      if (!useCustomBaseline && r.data) {
+        setCustomBaseM(r.data.M);
+        setCustomBaseTE(r.data.STE);
+        setCustomBaseSound(r.data.Sound);
+      }
     } catch {} finally { setLoading(false); }
-  }, [params, actualTargets]);
+  }, [params, actualTargets, calcRatio, useCustomBaseline]);
 
   useEffect(() => { runPrediction(); }, [runPrediction]);
 
@@ -87,7 +103,12 @@ export default function MainWorkspace() {
     try {
       const r = await api.post('/api/sensitivity', {
         inputs: { ...params, i: parseFloat(calcRatio), template_id: actualTargets?.id || 1 },
-        delta_M: deltaM, delta_TE: deltaTE, delta_Sound: deltaSound,
+        delta_M: parseFloat(deltaM) || 0.0,
+        delta_TE: parseFloat(deltaTE) || 0.0,
+        delta_Sound: parseFloat(deltaSound) || 0.0,
+        custom_baseline_M: useCustomBaseline ? parseFloat(customBaseM) : null,
+        custom_baseline_TE: useCustomBaseline ? parseFloat(customBaseTE) : null,
+        custom_baseline_Sound: useCustomBaseline ? parseFloat(customBaseSound) : null,
       });
       setSensData(r.data);
     } catch {} finally { setSensLoading(false); }
@@ -151,6 +172,20 @@ export default function MainWorkspace() {
     }
   };
 
+const renderLabelWithDiagram = (paramKey, labelText, position = 'top') => (
+    <div
+      className="param-label-wrapper"
+      onMouseEnter={() => setHoveredParam(paramKey)}
+      onMouseLeave={() => setHoveredParam(null)}
+    >
+      <span>{labelText}</span>
+      <span className="param-info-tag">i</span>
+      {hoveredParam === paramKey && (
+        <ParamDiagramModal paramKey={paramKey} position={position} t={t} />
+      )}
+    </div>
+  );
+
   if (scenarioIdx === 0) {
     const m = prediction?.M ?? 0;
     const te = prediction?.STE ?? 0;
@@ -174,36 +209,53 @@ export default function MainWorkspace() {
         <p className="subtitle">{t('Enter gear geometry and load parameters:')}</p>
 
         <div className="form-grid-3">
+          {/* MACRO-GEOMETRY SECTION */}
           <div className="form-section">
             <h3>📐 {t('Macro-Geometry')}</h3>
-            <label>{t('Normal Module mn [mm]')}</label>
+            
+            {renderLabelWithDiagram('mn', t('Normal Module mn [mm]'), 'bottom')}
             <input type="number" value={params.mn} step={0.01} onChange={e => updateParam('mn', +e.target.value)} />
-            <label>{t('Pinion Teeth z1')}</label>
+
+            {renderLabelWithDiagram('z1', t('Pinion Teeth z1'))}
             <input type="number" value={params.z1} step={1} onChange={e => updateParam('z1', +e.target.value)} />
-            <label>{t('Wheel Teeth z2')}</label>
+
+            {renderLabelWithDiagram('z2', t('Wheel Teeth z2'))}
             <input type="number" value={params.z2} step={1} onChange={e => updateParam('z2', +e.target.value)} />
+
             <div className="info-box">⚙️ {t('Gear Ratio')}: <b>{calcRatio} : 1</b></div>
-            <label>{t('Helix Angle β [deg]')}</label>
+
+            {renderLabelWithDiagram('beta', t('Helix Angle β [deg]'))}
             <input type="number" value={params.beta} step={0.1} onChange={e => updateParam('beta', +e.target.value)} />
-            <label>{t('Face Width b [mm]')}</label>
+
+            {renderLabelWithDiagram('b', t('Face Width b [mm]'))}
             <input type="number" value={params.b} step={0.5} onChange={e => updateParam('b', +e.target.value)} />
           </div>
+
+          {/* OPERATING LOADS SECTION */}
           <div className="form-section">
             <h3>⚡ {t('Operating Loads')}</h3>
-            <label>{t('Torque T1 [Nm]')}</label>
+
+            {renderLabelWithDiagram('T1', t('Torque T1 [Nm]'), 'bottom')}
             <input type="number" value={params.T1} step={0.5} onChange={e => updateParam('T1', +e.target.value)} />
-            <label>{t('Speed n1 [rpm]')}</label>
+
+            {renderLabelWithDiagram('n1', t('Speed n1 [rpm]'))}
             <input type="number" value={params.n1} step={50} onChange={e => updateParam('n1', +e.target.value)} />
-            <label>{t('Application Factor KA')}</label>
+
+            {renderLabelWithDiagram('K_A', t('Application Factor KA'))}
             <input type="number" value={params.K_A} step={0.01} onChange={e => updateParam('K_A', +e.target.value)} />
           </div>
+
+          {/* MICRO-GEOMETRY & QUALITY SECTION */}
           <div className="form-section">
             <h3>🛠️ {t('Micro-Geometry & Quality')}</h3>
-            <label>{t('Tip Relief Cα [µm]')}</label>
+
+            {renderLabelWithDiagram('Calpha', t('Tip Relief Cα [µm]'), 'bottom')}
             <input type="number" value={params.Calpha} step={0.5} onChange={e => updateParam('Calpha', +e.target.value)} />
-            <label>{t('Flank Crowning Cβ [µm]')}</label>
+
+            {renderLabelWithDiagram('Cbeta', t('Flank Crowning Cβ [µm]'))}
             <input type="number" value={params.Cbeta} step={0.5} onChange={e => updateParam('Cbeta', +e.target.value)} />
-            <label>{t('ISO Quality Grade Q')}</label>
+
+            {renderLabelWithDiagram('Q', t('ISO Quality Grade Q'))}
             <select value={params.Q} onChange={e => updateParam('Q', +e.target.value)}>
               {[4,5,6,7,8,9,10].map(q => <option key={q} value={q}>{q}</option>)}
             </select>
@@ -391,64 +443,163 @@ export default function MainWorkspace() {
       {activeOptTab === 'sensitivity' && (
         <div>
           <h3>🧮 {t('Sensitivity Analysis & Parameter Trade-Off Matrix')}</h3>
-          <p className="subtitle">{t('Specify desired target shifts (ΔM, ΔSTE, ΔLW) to calculate the precise input parameter changes required.')}</p>
+          <p className="subtitle">{t('Configure baseline targets and target deltas (set to 0.0 to keep any metric unchanged):')}</p>
 
-          {sensData && (
-            <div className="baseline-cards-row">
+          {/* BASELINE CONFIGURATION CARD */}
+          <div className="form-section" style={{ marginBottom: '1.25rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem' }}>
+              <h4 style={{ margin: 0, fontSize: '0.88rem', color: 'var(--text-heading)' }}>
+                📍 {t('Reference Baseline Configuration')}
+              </h4>
+              <button
+                className="chip-filter-btn"
+                style={{ padding: '3px 10px', fontSize: '0.72rem' }}
+                onClick={() => setUseCustomBaseline(!useCustomBaseline)}
+              >
+                {useCustomBaseline ? t('Reset to Workspace Prediction') : t('✏️ Edit Baseline Values')}
+              </button>
+            </div>
+
+            <div className="baseline-cards-row" style={{ marginTop: 0 }}>
               <div className="baseline-card baseline-m">
                 <span className="baseline-icon">📍</span>
-                <span>{t('Baseline Misalignment (M)')}: <strong>{sensData.baseline.M} µm</strong></span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{t('Baseline Misalignment (M)')}</div>
+                  {useCustomBaseline ? (
+                    <input
+                      type="number"
+                      value={customBaseM}
+                      step={0.5}
+                      onChange={e => setCustomBaseM(+e.target.value)}
+                      style={{ padding: '3px 6px', marginTop: '4px', fontSize: '0.85rem' }}
+                    />
+                  ) : (
+                    <strong>{sensData ? sensData.baseline.M : (prediction?.M?.toFixed(2) ?? '31.70')} µm</strong>
+                  )}
+                </div>
               </div>
+
               <div className="baseline-card baseline-ste">
                 <span className="baseline-icon">📍</span>
-                <span>{t('Baseline STE')}: <strong>{sensData.baseline.STE} µm</strong></span>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{t('Baseline STE')}</div>
+                  {useCustomBaseline ? (
+                    <input
+                      type="number"
+                      value={customBaseTE}
+                      step={0.02}
+                      onChange={e => setCustomBaseTE(+e.target.value)}
+                      style={{ padding: '3px 6px', marginTop: '4px', fontSize: '0.85rem' }}
+                    />
+                  ) : (
+                    <strong>{sensData ? sensData.baseline.STE : (prediction?.STE?.toFixed(3) ?? '0.930')} µm</strong>
+                  )}
+                </div>
               </div>
+
               <div className="baseline-card baseline-lw">
                 <span className="baseline-icon">📍</span>
-                <span>{t('Baseline Noise (LW)')}: <strong>{sensData.baseline.Sound} dB</strong></span>
-              </div>
-            </div>
-          )}
-
-          <div className="form-grid-3" style={{ marginTop: '1.5rem' }}>
-            <div className="form-section">
-              <label>{t('Target Misalignment Delta (ΔM) [µm]')}</label>
-              <div className="stepper-input">
-                <button className="stepper-btn" onClick={() => setDeltaM(v => Math.max(0.5, v - 0.5))}>−</button>
-                <input type="number" value={deltaM} step={0.5} onChange={e => setDeltaM(+e.target.value)} />
-                <button className="stepper-btn" onClick={() => setDeltaM(v => v + 0.5)}>+</button>
-              </div>
-            </div>
-            <div className="form-section">
-              <label>{t('Target STE Delta (ΔSTE) [µm]')}</label>
-              <div className="stepper-input">
-                <button className="stepper-btn" onClick={() => setDeltaTE(v => Math.max(0.01, +(v - 0.02).toFixed(3)))}>−</button>
-                <input type="number" value={deltaTE} step={0.02} onChange={e => setDeltaTE(+e.target.value)} />
-                <button className="stepper-btn" onClick={() => setDeltaTE(v => +(v + 0.02).toFixed(3))}>+</button>
-              </div>
-            </div>
-            <div className="form-section">
-              <label>{t('Target Noise Delta (ΔLW) [dB]')}</label>
-              <div className="stepper-input">
-                <button className="stepper-btn" onClick={() => setDeltaSound(v => Math.max(0.2, +(v - 0.2).toFixed(2)))}>−</button>
-                <input type="number" value={deltaSound} step={0.2} onChange={e => setDeltaSound(+e.target.value)} />
-                <button className="stepper-btn" onClick={() => setDeltaSound(v => +(v + 0.2).toFixed(2))}>+</button>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{t('Baseline Noise (LW)')}</div>
+                  {useCustomBaseline ? (
+                    <input
+                      type="number"
+                      value={customBaseSound}
+                      step={0.5}
+                      onChange={e => setCustomBaseSound(+e.target.value)}
+                      style={{ padding: '3px 6px', marginTop: '4px', fontSize: '0.85rem' }}
+                    />
+                  ) : (
+                    <strong>{sensData ? sensData.baseline.Sound : (prediction?.Sound?.toFixed(2) ?? '51.90')} dB</strong>
+                  )}
+                </div>
               </div>
             </div>
           </div>
+
+          {/* TARGET DELTAS WITH 0.0 OPTION */}
+          <div className="form-grid-3" style={{ marginTop: '1rem' }}>
+            <div className="form-section">
+              <label>{t('Target Misalignment Delta (ΔM) [µm]')}</label>
+              <div className="stepper-input">
+                <button className="stepper-btn" onClick={() => setDeltaM(v => +(v - 0.5).toFixed(2))}>−</button>
+                <input
+                  type="number"
+                  value={deltaM}
+                  step={0.5}
+                  onChange={e => setDeltaM(+e.target.value)}
+                />
+                <button className="stepper-btn" onClick={() => setDeltaM(v => +(v + 0.5).toFixed(2))}>+</button>
+              </div>
+              <div className="input-hint">{t('Set to 0.0 to keep Misalignment unchanged')}</div>
+            </div>
+
+            <div className="form-section">
+              <label>{t('Target STE Delta (ΔSTE) [µm]')}</label>
+              <div className="stepper-input">
+                <button className="stepper-btn" onClick={() => setDeltaTE(v => +(v - 0.02).toFixed(3))}>−</button>
+                <input
+                  type="number"
+                  value={deltaTE}
+                  step={0.02}
+                  onChange={e => setDeltaTE(+e.target.value)}
+                />
+                <button className="stepper-btn" onClick={() => setDeltaTE(v => +(v + 0.02).toFixed(3))}>+</button>
+              </div>
+              <div className="input-hint">{t('Set to 0.0 to keep Transmission Error unchanged')}</div>
+            </div>
+
+            <div className="form-section">
+              <label>{t('Target Noise Delta (ΔLW) [dB]')}</label>
+              <div className="stepper-input">
+                <button className="stepper-btn" onClick={() => setDeltaSound(v => +(v - 0.2).toFixed(2))}>−</button>
+                <input
+                  type="number"
+                  value={deltaSound}
+                  step={0.2}
+                  onChange={e => setDeltaSound(+e.target.value)}
+                />
+                <button className="stepper-btn" onClick={() => setDeltaSound(v => +(v + 0.2).toFixed(2))}>+</button>
+              </div>
+              <div className="input-hint">{t('Set to 0.0 to keep Sound Power Level unchanged')}</div>
+            </div>
+          </div>
+
           <button className="primary-btn" onClick={runSensitivity} disabled={sensLoading}>
             🔄 {sensLoading ? t('Computing Sensitivities...') : t('Run Sensitivity Analysis')}
           </button>
 
           {sensData && (
             <>
-              {/* TABLE 1: TOP PRIORITY ACTION RECOMMENDATION TABLE (ALL 12 INPUT PARAMETERS) */}
-              <h3 style={{ marginTop: '2rem' }}>
-                📋 {t('Required Design Parameter Adjustments for Target Shift (Top Recommendations)')}
+              {/* TABLE 1: CAUSE-AND-EFFECT ACTION RECOMMENDATION TABLE */}
+              <div className="exec-summary-box" style={{ marginTop: '2rem', borderLeftColor: '#38BDF8' }}>
+                <div className="exec-summary-title" style={{ color: '#38BDF8' }}>
+                  🎯 {t('Engineering Impact Summary')}:
+                </div>
+                <div style={{ fontSize: '0.86rem', color: 'var(--text-primary)', lineHeight: 1.6 }}>
+                  To achieve your specified NVH performance change:
+                  <ul style={{ listStyle: 'disc', paddingLeft: '1.25rem', marginTop: '0.35rem' }}>
+                    <li>
+                      <strong>Shaft Misalignment (ΔM):</strong> <code>{deltaM !== 0 ? `${deltaM > 0 ? '+' : ''}${deltaM} µm` : '0.00 µm (Unchanged)'}</code>
+                    </li>
+                    <li>
+                      <strong>Transmission Error (ΔSTE):</strong> <code>{deltaTE !== 0 ? `${deltaTE > 0 ? '+' : ''}${deltaTE} µm` : '0.00 µm (Unchanged)'}</code>
+                    </li>
+                    <li>
+                      <strong>Radiated Noise (ΔLW):</strong> <code>{deltaSound !== 0 ? `${deltaSound > 0 ? '+' : ''}${deltaSound} dB` : '0.00 dB (Unchanged)'}</code>
+                    </li>
+                  </ul>
+                  The parameters below require adjustment to fulfill these deltas:
+                </div>
+              </div>
+
+              <h3 style={{ marginTop: '1.75rem' }}>
+                📋 {t('Required Design Parameter Adjustments for Target Shift')}
               </h3>
               <p className="subtitle">
-                {t('Recommended changes across all 12 input parameters to satisfy target shifts:')}
+                {t('Showing how much each design parameter is impacted to satisfy your non-zero target changes:')}
               </p>
+              
               <div className="table-wrapper">
                 <table className="data-table">
                   <thead>
@@ -456,29 +607,40 @@ export default function MainWorkspace() {
                       <th>#</th>
                       <th>{t('Design Parameter')}</th>
                       <th>{t('Baseline Value')}</th>
-                      <th>{t('Target Addressed')}</th>
+                      <th>{t('Target Output Impacted')}</th>
                       <th>{t('Required Shift')} (Δ)</th>
-                      <th>{t('Change')} (%)</th>
-                      <th>{t('Target Value After Shift')}</th>
+                      <th>{t('Relative Change')} (%)</th>
+                      <th>{t('Recommended Target Value')}</th>
                       <th>{t('Design Feasibility')}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {sensData.action_rows.map((r, i) => {
-                      const hasShift = r.req_shift !== null;
+                      const isActive = r.is_target_active;
                       const sign = r.req_shift >= 0 ? '+' : '';
                       const pctSign = r.pct_change >= 0 ? '+' : '';
+
                       return (
-                        <tr key={r.key}>
+                        <tr
+                          key={r.key}
+                          style={{
+                            background: isActive ? 'var(--glass)' : 'transparent',
+                            opacity: isActive ? 1 : 0.65,
+                          }}
+                        >
                           <td>{i}</td>
                           <td><strong>{t(r.param)}</strong></td>
                           <td>{r.current} {r.unit}</td>
-                          <td><code>{r.target_metric}</code></td>
-                          <td style={{ color: hasShift ? (r.req_shift > 0 ? '#38BDF8' : '#F59E0B') : 'var(--text-muted)' }}>
-                            {hasShift ? `${sign}${r.req_shift} ${r.unit}` : '—'}
+                          <td>
+                            <code style={{ color: isActive ? '#38BDF8' : 'var(--text-muted)' }}>
+                              {r.target_metric}
+                            </code>
                           </td>
-                          <td style={{ color: hasShift ? (r.pct_change > 0 ? '#38BDF8' : '#F59E0B') : 'var(--text-muted)' }}>
-                            {hasShift ? `${pctSign}${r.pct_change}%` : '0.00%'}
+                          <td style={{ color: isActive ? (r.req_shift > 0 ? '#38BDF8' : '#F59E0B') : 'var(--text-muted)', fontWeight: isActive ? 700 : 400 }}>
+                            {isActive ? (r.req_shift !== null ? `${sign}${r.req_shift} ${r.unit}` : '—') : '0.00 (No Change Needed)'}
+                          </td>
+                          <td style={{ color: isActive ? (r.pct_change > 0 ? '#38BDF8' : '#F59E0B') : 'var(--text-muted)', fontWeight: isActive ? 700 : 400 }}>
+                            {isActive ? (r.pct_change !== null ? `${pctSign}${r.pct_change}%` : '—') : '0.00%'}
                           </td>
                           <td>
                             <strong>{r.new_value} {r.unit}</strong>
@@ -497,7 +659,7 @@ export default function MainWorkspace() {
                 </table>
               </div>
 
-              {/* TABLE 2: COMPLETE 12-PARAMETER PARTIAL DERIVATIVE SENSITIVITY MATRIX */}
+              {/* TABLE 2: TECHNICAL REFERENCE PARTIAL DERIVATIVE MATRIX */}
               <h3 style={{ marginTop: '2.5rem' }}>
                 🧮 {t('Full 12-Parameter Partial Derivative & Shift Matrix (Engineering Reference)')}
               </h3>
@@ -526,11 +688,11 @@ export default function MainWorkspace() {
                         <td><strong>{t(r.param)}</strong></td>
                         <td>{r.current} {r.unit}</td>
                         <td>{r.sens_M >= 0 ? '+' : ''}{r.sens_M.toFixed(3)} µm/{r.unit || 'unit'}</td>
-                        <td>{r.req_M != null ? `${r.req_M >= 0 ? '+' : ''}${r.req_M} ${r.unit}` : 'N/A'}</td>
+                        <td>{r.req_M != null ? (r.req_M === 0 ? '0.00 (Unchanged)' : `${r.req_M >= 0 ? '+' : ''}${r.req_M} ${r.unit}`) : 'N/A'}</td>
                         <td>{r.sens_TE >= 0 ? '+' : ''}{r.sens_TE.toFixed(3)} µm/{r.unit || 'unit'}</td>
-                        <td>{r.req_TE != null ? `${r.req_TE >= 0 ? '+' : ''}${r.req_TE} ${r.unit}` : 'N/A'}</td>
+                        <td>{r.req_TE != null ? (r.req_TE === 0 ? '0.00 (Unchanged)' : `${r.req_TE >= 0 ? '+' : ''}${r.req_TE} ${r.unit}`) : 'N/A'}</td>
                         <td>{r.sens_Sound >= 0 ? '+' : ''}{r.sens_Sound.toFixed(3)} dB/{r.unit || 'unit'}</td>
-                        <td>{r.req_Sound != null ? `${r.req_Sound >= 0 ? '+' : ''}${r.req_Sound} ${r.unit}` : 'N/A'}</td>
+                        <td>{r.req_Sound != null ? (r.req_Sound === 0 ? '0.00 (Unchanged)' : `${r.req_Sound >= 0 ? '+' : ''}${r.req_Sound} ${r.unit}`) : 'N/A'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -538,7 +700,7 @@ export default function MainWorkspace() {
               </div>
 
               <div className="guide-note" style={{ marginTop: '1.5rem' }}>
-                <strong>💡 {t('How to read this table')}:</strong> {t('"Sensitivity to M" shows how much M changes per unit change in that parameter (∂M/∂p). "Req. Shift for ΔM" shows how much that parameter must change to achieve your target ΔM. N/A means the parameter has zero or negligible sensitivity.')}
+                <strong>💡 {t('How to read this table')}:</strong> {t('"Sensitivity" shows how much the NVH metric changes per unit change in that parameter (∂Y/∂X). "Req. Shift" shows how much that parameter must move to achieve your specific delta. If a target delta is 0.0, the required shift is 0.00.')}
               </div>
             </>
           )}

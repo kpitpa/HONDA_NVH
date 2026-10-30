@@ -143,9 +143,12 @@ class OptimizationTargets(BaseModel):
 
 class SensitivityRequest(BaseModel):
     inputs: DesignInput
-    delta_M: float = 2.0
-    delta_TE: float = 0.10
-    delta_Sound: float = 1.0
+    delta_M: float = 0.0
+    delta_TE: float = 0.0
+    delta_Sound: float = 0.0
+    custom_baseline_M: Optional[float] = None
+    custom_baseline_TE: Optional[float] = None
+    custom_baseline_Sound: Optional[float] = None
 
 
 class AddCaseRequest(BaseModel):
@@ -307,13 +310,17 @@ def optimize(targets: OptimizationTargets):
 
 @app.post("/api/sensitivity")
 def sensitivity(req: SensitivityRequest):
-    """12-Parameter Sensitivity Analysis & Action Recommendation Calculation."""
+    """12-Parameter Sensitivity Analysis supporting zero deltas and custom baselines."""
     d = req.inputs.model_dump()
     if d.get('i') is None:
         d['i'] = round(d['z2'] / d['z1'], 2)
-    base_m, base_te, base_s, _ = predict_from_inputs(d, template_id=req.inputs.template_id)
+    
+    calc_m, calc_te, calc_s, _ = predict_from_inputs(d, template_id=req.inputs.template_id)
+    
+    base_m = req.custom_baseline_M if req.custom_baseline_M is not None else calc_m
+    base_te = req.custom_baseline_TE if req.custom_baseline_TE is not None else calc_te
+    base_s = req.custom_baseline_Sound if req.custom_baseline_Sound is not None else calc_s
 
-    # All 12 gear design parameters evaluated
     sens_defs = [
         {'param': 'Normal Module (mn)', 'key': 'mn', 'unit': 'mm', 'step': 0.10, 'bounds': (1.0, 5.0), 'target_for_action': 'STE'},
         {'param': 'Pinion Teeth (z1)', 'key': 'z1', 'unit': 'teeth', 'step': 1.0, 'bounds': (14, 45), 'target_for_action': 'STE'},
@@ -341,35 +348,36 @@ def sensitivity(req: SensitivityRequest):
             inp_pert[k] = int(round(inp_pert[k]))
             
         m_p, te_p, s_p, _ = predict_from_inputs(inp_pert, template_id=req.inputs.template_id)
-        dM = (m_p - base_m) / s['step']
-        dTE = (te_p - base_te) / s['step']
-        dS = (s_p - base_s) / s['step']
+        dM = (m_p - calc_m) / s['step']
+        dTE = (te_p - calc_te) / s['step']
+        dS = (s_p - calc_s) / s['step']
 
-        # Determine target delta to associate
         target_name = s['target_for_action']
         if target_name == 'M':
             req_delta = req.delta_M
             deriv = dM
-            target_metric_label = f"ΔM ({req.delta_M:+.2f} µm)"
+            target_metric_label = f"ΔM ({req.delta_M:+.2f} µm)" if req.delta_M != 0 else "ΔM (0.00 µm — Unchanged)"
+            is_active = (req.delta_M != 0)
         elif target_name == 'STE':
             req_delta = req.delta_TE
             deriv = dTE
-            target_metric_label = f"ΔSTE ({req.delta_TE:+.2f} µm)"
+            target_metric_label = f"ΔSTE ({req.delta_TE:+.2f} µm)" if req.delta_TE != 0 else "ΔSTE (0.00 µm — Unchanged)"
+            is_active = (req.delta_TE != 0)
         else:
             req_delta = req.delta_Sound
             deriv = dS
-            target_metric_label = f"ΔLW ({req.delta_Sound:+.2f} dB)"
+            target_metric_label = f"ΔLW ({req.delta_Sound:+.2f} dB)" if req.delta_Sound != 0 else "ΔLW (0.00 dB — Unchanged)"
+            is_active = (req.delta_Sound != 0)
 
-        # Compute required shift
-        if abs(deriv) > 1e-5:
+        if is_active and abs(deriv) > 1e-5:
             req_shift = req_delta / deriv
             pct_change = (req_shift / cur_val * 100.0) if cur_val != 0 else 0.0
             new_val = cur_val + req_shift
             b_min, b_max = s['bounds']
             is_feasible = (b_min <= new_val <= b_max)
         else:
-            req_shift = None
-            pct_change = None
+            req_shift = 0.0 if not is_active else None
+            pct_change = 0.0 if not is_active else None
             new_val = cur_val
             is_feasible = True
 
@@ -379,9 +387,10 @@ def sensitivity(req: SensitivityRequest):
             'current': cur_val,
             'unit': s['unit'],
             'target_metric': target_metric_label,
+            'is_target_active': is_active,
             'req_shift': round(req_shift, 3) if req_shift is not None else None,
             'pct_change': round(pct_change, 2) if pct_change is not None else None,
-            'new_value': round(new_val, 3) if req_shift is not None else round(cur_val, 3),
+            'new_value': round(new_val, 3),
             'feasible': is_feasible,
         })
 
@@ -393,9 +402,9 @@ def sensitivity(req: SensitivityRequest):
             'sens_M': round(dM, 4),
             'sens_TE': round(dTE, 4),
             'sens_Sound': round(dS, 4),
-            'req_M': round(req.delta_M / dM, 2) if abs(dM) > 1e-4 else None,
-            'req_TE': round(req.delta_TE / dTE, 2) if abs(dTE) > 1e-4 else None,
-            'req_Sound': round(req.delta_Sound / dS, 2) if abs(dS) > 1e-4 else None,
+            'req_M': round(req.delta_M / dM, 2) if (abs(dM) > 1e-4 and req.delta_M != 0) else (0.0 if req.delta_M == 0 else None),
+            'req_TE': round(req.delta_TE / dTE, 2) if (abs(dTE) > 1e-4 and req.delta_TE != 0) else (0.0 if req.delta_TE == 0 else None),
+            'req_Sound': round(req.delta_Sound / dS, 2) if (abs(dS) > 1e-4 and req.delta_Sound != 0) else (0.0 if req.delta_Sound == 0 else None),
         })
 
     return {
