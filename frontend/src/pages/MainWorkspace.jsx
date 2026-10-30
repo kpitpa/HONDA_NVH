@@ -53,6 +53,7 @@ export default function MainWorkspace() {
   const [deltaTE, setDeltaTE] = useState(0.10);
   const [deltaSound, setDeltaSound] = useState(1.0);
   const [sensData, setSensData] = useState(null);
+  const [sensLoading, setSensLoading] = useState(false);
 
   // Optimization state
   const [targetM, setTargetM] = useState(35.0);
@@ -82,13 +83,14 @@ export default function MainWorkspace() {
   useEffect(() => { runPrediction(); }, [runPrediction]);
 
   const runSensitivity = async () => {
+    setSensLoading(true);
     try {
       const r = await api.post('/api/sensitivity', {
         inputs: { ...params, i: parseFloat(calcRatio), template_id: actualTargets?.id || 1 },
         delta_M: deltaM, delta_TE: deltaTE, delta_Sound: deltaSound,
       });
       setSensData(r.data);
-    } catch {}
+    } catch {} finally { setSensLoading(false); }
   };
 
   const runOptimization = async () => {
@@ -352,15 +354,6 @@ export default function MainWorkspace() {
   }
 
   // === Scenario 1: Optimization Mode ===
-  const paramNameMap = {
-    'b': 'Face Width (b)',
-    'Cbeta': 'Flank Crowning (Cβ)',
-    'T1': 'Input Torque (T1)',
-    'Calpha': 'Tip Relief (Cα)',
-    'beta': 'Helix Angle (β)',
-    'mn': 'Normal Module (mn)',
-  };
-
   const optParamLabels = {
     'mn': 'Normal Module (mn)',
     'z1': 'Pinion Teeth (z1)',
@@ -381,11 +374,6 @@ export default function MainWorkspace() {
     'T1': 'Nm', 'n1': 'rpm', 'Calpha': 'µm', 'Cbeta': 'µm', 'Q': '', 'K_A': '', 'i': '',
   };
 
-  const fmtSens = (val, unit) => `${val >= 0 ? '+' : ''}${val.toFixed(3)} µm/${unit}`;
-  const fmtSensTE = (val, unit) => `${val >= 0 ? '+' : ''}${val.toFixed(3)} µm/${unit}`;
-  const fmtSensLW = (val, unit) => `${val >= 0 ? '+' : ''}${val.toFixed(3)} dB/${unit}`;
-  const fmtReq = (val, unit) => val == null ? 'N/A' : `${val >= 0 ? '+' : ''}${val.toFixed(2)} ${unit}`;
-
   return (
     <div className="page">
       <h2>🎯 {t('Target Optimization Mode: Gear Design Synthesis & Sensitivity Analysis')}</h2>
@@ -403,7 +391,7 @@ export default function MainWorkspace() {
       {activeOptTab === 'sensitivity' && (
         <div>
           <h3>🧮 {t('Sensitivity Analysis & Parameter Trade-Off Matrix')}</h3>
-          <p className="subtitle">{t('Compute partial derivatives of each NVH output with respect to gear design parameters. Shows how much each parameter must change to achieve the target delta.')}</p>
+          <p className="subtitle">{t('Specify desired target shifts (ΔM, ΔSTE, ΔLW) to calculate the precise input parameter changes required.')}</p>
 
           {sensData && (
             <div className="baseline-cards-row">
@@ -448,41 +436,111 @@ export default function MainWorkspace() {
               </div>
             </div>
           </div>
-          <button className="primary-btn" onClick={runSensitivity}>🔄 {t('Run Sensitivity Analysis')}</button>
+          <button className="primary-btn" onClick={runSensitivity} disabled={sensLoading}>
+            🔄 {sensLoading ? t('Computing Sensitivities...') : t('Run Sensitivity Analysis')}
+          </button>
 
           {sensData && (
-            <div className="table-wrapper" style={{ marginTop: '1.5rem' }}>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th></th>
-                    <th>{t('Gear Parameter')}</th>
-                    <th>{t('Current Value')}</th>
-                    <th>{t('Sensitivity to M')}</th>
-                    <th>{t('Req. Shift for ΔM')}</th>
-                    <th>{t('Sensitivity to STE')}</th>
-                    <th>{t('Req. Shift for ΔSTE')}</th>
-                    <th>{t('Sensitivity to Noise')}</th>
-                    <th>{t('Req. Shift for ΔNoise')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sensData.rows.map((r, i) => (
-                    <tr key={i}>
-                      <td>{i}</td>
-                      <td><strong>{paramNameMap[r.param] || r.param}</strong></td>
-                      <td>{r.current} {r.unit}</td>
-                      <td>{fmtSens(r.sens_M, r.unit)}</td>
-                      <td>{fmtReq(r.req_M, r.unit)}</td>
-                      <td>{fmtSensTE(r.sens_TE, r.unit)}</td>
-                      <td>{fmtReq(r.req_TE, r.unit)}</td>
-                      <td>{fmtSensLW(r.sens_Sound, r.unit)}</td>
-                      <td>{fmtReq(r.req_Sound, r.unit)}</td>
+            <>
+              {/* TABLE 1: TOP PRIORITY ACTION RECOMMENDATION TABLE (ALL 12 INPUT PARAMETERS) */}
+              <h3 style={{ marginTop: '2rem' }}>
+                📋 {t('Required Design Parameter Adjustments for Target Shift (Top Recommendations)')}
+              </h3>
+              <p className="subtitle">
+                {t('Recommended changes across all 12 input parameters to satisfy target shifts:')}
+              </p>
+              <div className="table-wrapper">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>{t('Design Parameter')}</th>
+                      <th>{t('Baseline Value')}</th>
+                      <th>{t('Target Addressed')}</th>
+                      <th>{t('Required Shift')} (Δ)</th>
+                      <th>{t('Change')} (%)</th>
+                      <th>{t('Target Value After Shift')}</th>
+                      <th>{t('Design Feasibility')}</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {sensData.action_rows.map((r, i) => {
+                      const hasShift = r.req_shift !== null;
+                      const sign = r.req_shift >= 0 ? '+' : '';
+                      const pctSign = r.pct_change >= 0 ? '+' : '';
+                      return (
+                        <tr key={r.key}>
+                          <td>{i}</td>
+                          <td><strong>{t(r.param)}</strong></td>
+                          <td>{r.current} {r.unit}</td>
+                          <td><code>{r.target_metric}</code></td>
+                          <td style={{ color: hasShift ? (r.req_shift > 0 ? '#38BDF8' : '#F59E0B') : 'var(--text-muted)' }}>
+                            {hasShift ? `${sign}${r.req_shift} ${r.unit}` : '—'}
+                          </td>
+                          <td style={{ color: hasShift ? (r.pct_change > 0 ? '#38BDF8' : '#F59E0B') : 'var(--text-muted)' }}>
+                            {hasShift ? `${pctSign}${r.pct_change}%` : '0.00%'}
+                          </td>
+                          <td>
+                            <strong>{r.new_value} {r.unit}</strong>
+                          </td>
+                          <td>
+                            {r.feasible ? (
+                              <span style={{ color: '#10B981', fontWeight: 600 }}>✅ {t('Feasible')}</span>
+                            ) : (
+                              <span style={{ color: '#EF4444', fontWeight: 600 }}>⚠️ {t('Exceeds Bounds')}</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* TABLE 2: COMPLETE 12-PARAMETER PARTIAL DERIVATIVE SENSITIVITY MATRIX */}
+              <h3 style={{ marginTop: '2.5rem' }}>
+                🧮 {t('Full 12-Parameter Partial Derivative & Shift Matrix (Engineering Reference)')}
+              </h3>
+              <p className="subtitle">
+                {t('Detailed sensitivity derivatives (∂Y/∂X) and exact shifts required for each target individually:')}
+              </p>
+              <div className="table-wrapper">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>{t('Gear Parameter')}</th>
+                      <th>{t('Current Value')}</th>
+                      <th>{t('Sensitivity to M')}</th>
+                      <th>{t('Req. Shift for ΔM')}</th>
+                      <th>{t('Sensitivity to STE')}</th>
+                      <th>{t('Req. Shift for ΔSTE')}</th>
+                      <th>{t('Sensitivity to Noise')}</th>
+                      <th>{t('Req. Shift for ΔNoise')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sensData.matrix_rows.map((r, i) => (
+                      <tr key={r.key}>
+                        <td>{i}</td>
+                        <td><strong>{t(r.param)}</strong></td>
+                        <td>{r.current} {r.unit}</td>
+                        <td>{r.sens_M >= 0 ? '+' : ''}{r.sens_M.toFixed(3)} µm/{r.unit || 'unit'}</td>
+                        <td>{r.req_M != null ? `${r.req_M >= 0 ? '+' : ''}${r.req_M} ${r.unit}` : 'N/A'}</td>
+                        <td>{r.sens_TE >= 0 ? '+' : ''}{r.sens_TE.toFixed(3)} µm/{r.unit || 'unit'}</td>
+                        <td>{r.req_TE != null ? `${r.req_TE >= 0 ? '+' : ''}${r.req_TE} ${r.unit}` : 'N/A'}</td>
+                        <td>{r.sens_Sound >= 0 ? '+' : ''}{r.sens_Sound.toFixed(3)} dB/{r.unit || 'unit'}</td>
+                        <td>{r.req_Sound != null ? `${r.req_Sound >= 0 ? '+' : ''}${r.req_Sound} ${r.unit}` : 'N/A'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="guide-note" style={{ marginTop: '1.5rem' }}>
+                <strong>💡 {t('How to read this table')}:</strong> {t('"Sensitivity to M" shows how much M changes per unit change in that parameter (∂M/∂p). "Req. Shift for ΔM" shows how much that parameter must change to achieve your target ΔM. N/A means the parameter has zero or negligible sensitivity.')}
+              </div>
+            </>
           )}
         </div>
       )}

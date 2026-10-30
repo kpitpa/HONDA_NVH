@@ -12,6 +12,7 @@ from sklearn.ensemble import GradientBoostingRegressor
 from scipy.optimize import minimize
 from pydantic import BaseModel
 from typing import Optional
+from datetime import datetime
 import json
 import io
 from translator import translate, translate_batch
@@ -147,6 +148,11 @@ class SensitivityRequest(BaseModel):
     delta_Sound: float = 1.0
 
 
+class AddCaseRequest(BaseModel):
+    params: DesignInput
+    targets: Optional[dict] = None
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -175,6 +181,68 @@ def get_case(case_id: int):
             "Mtrue": float(r['Mtrue']),
             "TEtrue": float(r['TEtrue']),
             "Sound": float(r['Sound']),
+        }
+    }
+
+
+@app.post("/api/case/add")
+def add_case(req: AddCaseRequest):
+    """Dynamically & permanently add a new benchmark case (e.g. #101) to CSV and memory."""
+    global df, df_eval
+    
+    d = req.params.model_dump()
+    if d.get('i') is None:
+        d['i'] = round(d['z2'] / d['z1'], 2)
+    
+    m, te, s, phys = predict_from_inputs(d, template_id=req.params.template_id)
+    next_id = int(df['id'].max()) + 1 if not df.empty else 1
+    
+    new_row = dict(phys)
+    new_row['id'] = next_id
+    
+    if req.targets:
+        new_row['Mtrue'] = float(req.targets.get('Mtrue', m))
+        new_row['TEtrue'] = float(req.targets.get('TEtrue', te))
+        new_row['Sound'] = float(req.targets.get('Sound', s))
+    else:
+        new_row['Mtrue'] = round(m, 2)
+        new_row['TEtrue'] = round(te, 3)
+        new_row['Sound'] = round(s, 2)
+        
+    new_row['Pred_M'] = round(m, 4)
+    new_row['Pred_STE'] = round(te, 4)
+    new_row['Pred_Sound'] = round(s, 4)
+    new_row['created_at'] = datetime.utcnow().isoformat()
+    
+    row_df = pd.DataFrame([new_row])
+    for col in df.columns:
+        if col not in row_df.columns:
+            row_df[col] = df[col].iloc[0] if not df.empty else 0
+    row_df = row_df[df.columns]
+    
+    df = pd.concat([df, row_df], ignore_index=True)
+    
+    eval_row = row_df.copy()
+    eval_row['Pred_M'] = round(m, 4)
+    eval_row['Pred_STE'] = round(te, 4)
+    eval_row['Pred_Sound'] = round(s, 4)
+    df_eval = pd.concat([df_eval, eval_row], ignore_index=True)
+    
+    csv_path = "data/SYNTHETIC_DATASET_100_CLEANED.csv"
+    df.to_csv(csv_path, index=False)
+    
+    return {
+        "status": "success",
+        "message": f"Case #{next_id} added successfully",
+        "id": next_id,
+        "case": {
+            "params": d,
+            "targets": {
+                "id": next_id,
+                "Mtrue": new_row['Mtrue'],
+                "TEtrue": new_row['TEtrue'],
+                "Sound": new_row['Sound']
+            }
         }
     }
 
@@ -239,34 +307,88 @@ def optimize(targets: OptimizationTargets):
 
 @app.post("/api/sensitivity")
 def sensitivity(req: SensitivityRequest):
-    """Sensitivity analysis around current design point."""
+    """12-Parameter Sensitivity Analysis & Action Recommendation Calculation."""
     d = req.inputs.model_dump()
     if d.get('i') is None:
         d['i'] = round(d['z2'] / d['z1'], 2)
     base_m, base_te, base_s, _ = predict_from_inputs(d, template_id=req.inputs.template_id)
 
+    # All 12 gear design parameters evaluated
     sens_defs = [
-        {'param': 'Face Width (b)', 'key': 'b', 'unit': 'mm', 'step': 2.0},
-        {'param': 'Flank Crowning (Cbeta)', 'key': 'Cbeta', 'unit': 'um', 'step': 1.0},
-        {'param': 'Input Torque (T1)', 'key': 'T1', 'unit': 'Nm', 'step': 5.0},
-        {'param': 'Tip Relief (Calpha)', 'key': 'Calpha', 'unit': 'um', 'step': 1.0},
-        {'param': 'Helix Angle (beta)', 'key': 'beta', 'unit': 'deg', 'step': 1.0},
-        {'param': 'Normal Module (mn)', 'key': 'mn', 'unit': 'mm', 'step': 0.25},
+        {'param': 'Normal Module (mn)', 'key': 'mn', 'unit': 'mm', 'step': 0.10, 'bounds': (1.0, 5.0), 'target_for_action': 'STE'},
+        {'param': 'Pinion Teeth (z1)', 'key': 'z1', 'unit': 'teeth', 'step': 1.0, 'bounds': (14, 45), 'target_for_action': 'STE'},
+        {'param': 'Wheel Teeth (z2)', 'key': 'z2', 'unit': 'teeth', 'step': 1.0, 'bounds': (50, 180), 'target_for_action': 'STE'},
+        {'param': 'Helix Angle (beta)', 'key': 'beta', 'unit': 'deg', 'step': 1.0, 'bounds': (10.0, 45.0), 'target_for_action': 'Noise'},
+        {'param': 'Face Width (b)', 'key': 'b', 'unit': 'mm', 'step': 1.5, 'bounds': (15.0, 70.0), 'target_for_action': 'M'},
+        {'param': 'Input Torque (T1)', 'key': 'T1', 'unit': 'Nm', 'step': 5.0, 'bounds': (10.0, 350.0), 'target_for_action': 'M'},
+        {'param': 'Pinion Speed (n1)', 'key': 'n1', 'unit': 'rpm', 'step': 200.0, 'bounds': (3000.0, 18000.0), 'target_for_action': 'Noise'},
+        {'param': 'Application Factor (KA)', 'key': 'K_A', 'unit': '', 'step': 0.05, 'bounds': (1.0, 2.0), 'target_for_action': 'M'},
+        {'param': 'Tip Relief (Calpha)', 'key': 'Calpha', 'unit': 'µm', 'step': 1.0, 'bounds': (2.0, 25.0), 'target_for_action': 'STE'},
+        {'param': 'Flank Crowning (Cbeta)', 'key': 'Cbeta', 'unit': 'µm', 'step': 1.0, 'bounds': (2.0, 25.0), 'target_for_action': 'STE'},
+        {'param': 'ISO Quality Grade (Q)', 'key': 'Q', 'unit': 'grade', 'step': 1.0, 'bounds': (4, 10), 'target_for_action': 'STE'},
+        {'param': 'Pressure Angle (alpha)', 'key': 'alpha', 'unit': 'deg', 'step': 1.0, 'bounds': (14.5, 25.0), 'target_for_action': 'STE'},
     ]
 
-    rows = []
+    action_rows = []
+    matrix_rows = []
+
     for s in sens_defs:
+        k = s['key']
+        cur_val = float(d.get(k, 20.0 if k == 'alpha' else 1.0))
         inp_pert = dict(d)
-        inp_pert[s['key']] = d[s['key']] + s['step']
+        inp_pert[k] = cur_val + s['step']
+        if k in ('z1', 'z2', 'Q'):
+            inp_pert[k] = int(round(inp_pert[k]))
+            
         m_p, te_p, s_p, _ = predict_from_inputs(inp_pert, template_id=req.inputs.template_id)
         dM = (m_p - base_m) / s['step']
         dTE = (te_p - base_te) / s['step']
         dS = (s_p - base_s) / s['step']
 
-        rows.append({
+        # Determine target delta to associate
+        target_name = s['target_for_action']
+        if target_name == 'M':
+            req_delta = req.delta_M
+            deriv = dM
+            target_metric_label = f"ΔM ({req.delta_M:+.2f} µm)"
+        elif target_name == 'STE':
+            req_delta = req.delta_TE
+            deriv = dTE
+            target_metric_label = f"ΔSTE ({req.delta_TE:+.2f} µm)"
+        else:
+            req_delta = req.delta_Sound
+            deriv = dS
+            target_metric_label = f"ΔLW ({req.delta_Sound:+.2f} dB)"
+
+        # Compute required shift
+        if abs(deriv) > 1e-5:
+            req_shift = req_delta / deriv
+            pct_change = (req_shift / cur_val * 100.0) if cur_val != 0 else 0.0
+            new_val = cur_val + req_shift
+            b_min, b_max = s['bounds']
+            is_feasible = (b_min <= new_val <= b_max)
+        else:
+            req_shift = None
+            pct_change = None
+            new_val = cur_val
+            is_feasible = True
+
+        action_rows.append({
             'param': s['param'],
-            'key': s['key'],
-            'current': d[s['key']],
+            'key': k,
+            'current': cur_val,
+            'unit': s['unit'],
+            'target_metric': target_metric_label,
+            'req_shift': round(req_shift, 3) if req_shift is not None else None,
+            'pct_change': round(pct_change, 2) if pct_change is not None else None,
+            'new_value': round(new_val, 3) if req_shift is not None else round(cur_val, 3),
+            'feasible': is_feasible,
+        })
+
+        matrix_rows.append({
+            'param': s['param'],
+            'key': k,
+            'current': cur_val,
             'unit': s['unit'],
             'sens_M': round(dM, 4),
             'sens_TE': round(dTE, 4),
@@ -278,7 +400,8 @@ def sensitivity(req: SensitivityRequest):
 
     return {
         "baseline": {"M": round(base_m, 2), "STE": round(base_te, 3), "Sound": round(base_s, 2)},
-        "rows": rows,
+        "action_rows": action_rows,
+        "matrix_rows": matrix_rows,
     }
 
 
@@ -312,7 +435,6 @@ def multi_compare(ids: str):
     sub['sort_order'] = sub['id'].apply(lambda x: id_list.index(x))
     sub = sub.sort_values('sort_order')
     records = sub.to_dict(orient='records')
-    # Add physics-computed fields for each case
     for rec in records:
         phys = calc_physics(rec)
         rec['Ft_N'] = round(phys['Ft_N'], 1)
@@ -395,7 +517,6 @@ def export_multi_compare_excel(ids: str):
             cell.alignment = Alignment(horizontal='center')
             if v is not None:
                 vals.append((float(v), rec['id']))
-        # Best performing case
         best_cell = ws.cell(row=r_idx, column=len(records) + 4)
         best_cell.border = thin_border
         best_cell.alignment = Alignment(horizontal='center')
@@ -519,11 +640,30 @@ def export_excel(inp: DesignInput):
 
 @app.get("/api/case-ids")
 def case_ids():
-    """Return all case IDs with their 6 primary input parameters for UI hover cards."""
-    cols = ['id', 'mn', 'z1', 'z2', 'beta', 'b', 'T1', 'n1']
+    """Return all case IDs with their 6 primary input parameters and NVH performance tier."""
+    cols = ['id', 'mn', 'z1', 'z2', 'beta', 'b', 'T1', 'n1', 'Mtrue', 'TEtrue', 'Sound']
     available_cols = [c for c in cols if c in df.columns]
-    records = df[available_cols].to_dict(orient="records")
-    return records
+    sub = df[available_cols].copy()
+    
+    m_norm = (sub['Mtrue'] - sub['Mtrue'].min()) / (sub['Mtrue'].max() - sub['Mtrue'].min() + 1e-6)
+    te_norm = (sub['TEtrue'] - sub['TEtrue'].min()) / (sub['TEtrue'].max() - sub['TEtrue'].min() + 1e-6)
+    s_norm = (sub['Sound'] - sub['Sound'].min()) / (sub['Sound'].max() - sub['Sound'].min() + 1e-6)
+    score = 0.3 * m_norm + 0.4 * te_norm + 0.3 * s_norm
+    
+    q_low = score.quantile(0.15)
+    q_high = score.quantile(0.85)
+    
+    tiers = []
+    for sc in score:
+        if sc <= q_low:
+            tiers.append("best")
+        elif sc >= q_high:
+            tiers.append("worst")
+        else:
+            tiers.append("nominal")
+            
+    sub['tier'] = tiers
+    return sub.to_dict(orient="records")
 
 
 # ---------------------------------------------------------------------------
@@ -531,8 +671,8 @@ def case_ids():
 # ---------------------------------------------------------------------------
 class TranslateRequest(BaseModel):
     texts: list[str]
-    source: str = "en"  # "en" or "ja"
-    target: str = "ja"  # "en" or "ja"
+    source: str = "en"
+    target: str = "ja"
 
 
 @app.post("/api/translate")
@@ -553,81 +693,6 @@ def translate_status():
         }
     except Exception as e:
         return {"available": False, "error": str(e)}
-
-from datetime import datetime
-
-class AddCaseRequest(BaseModel):
-    params: DesignInput
-    targets: Optional[dict] = None  # Optional: {"Mtrue": ..., "TEtrue": ..., "Sound": ...}
-
-@app.post("/api/case/add")
-def add_case(req: AddCaseRequest):
-    """Dynamically & permanently add a new benchmark case (e.g. #101) to CSV and memory."""
-    global df, df_eval
-    
-    d = req.params.model_dump()
-    if d.get('i') is None:
-        d['i'] = round(d['z2'] / d['z1'], 2)
-    
-    # Calculate physics and model predictions
-    m, te, s, phys = predict_from_inputs(d, template_id=req.params.template_id)
-    
-    # Auto-assign next sequential ID (e.g., 101)
-    next_id = int(df['id'].max()) + 1 if not df.empty else 1
-    
-    # Prepare row matching dataset schema
-    new_row = dict(phys)
-    new_row['id'] = next_id
-    
-    # Use provided true targets if given; otherwise fallback to model prediction
-    if req.targets:
-        new_row['Mtrue'] = float(req.targets.get('Mtrue', m))
-        new_row['TEtrue'] = float(req.targets.get('TEtrue', te))
-        new_row['Sound'] = float(req.targets.get('Sound', s))
-    else:
-        new_row['Mtrue'] = round(m, 2)
-        new_row['TEtrue'] = round(te, 3)
-        new_row['Sound'] = round(s, 2)
-        
-    new_row['Pred_M'] = round(m, 4)
-    new_row['Pred_STE'] = round(te, 4)
-    new_row['Pred_Sound'] = round(s, 4)
-    new_row['created_at'] = datetime.utcnow().isoformat()
-    
-    # Build single-row DataFrame aligned with df columns
-    row_df = pd.DataFrame([new_row])
-    for col in df.columns:
-        if col not in row_df.columns:
-            row_df[col] = df[col].iloc[0] if not df.empty else 0
-    row_df = row_df[df.columns]
-    
-    # 1. Update in-memory state
-    df = pd.concat([df, row_df], ignore_index=True)
-    
-    eval_row = row_df.copy()
-    eval_row['Pred_M'] = round(m, 4)
-    eval_row['Pred_STE'] = round(te, 4)
-    eval_row['Pred_Sound'] = round(s, 4)
-    df_eval = pd.concat([df_eval, eval_row], ignore_index=True)
-    
-    # 2. Permanent persistence to CSV
-    csv_path = "data/SYNTHETIC_DATASET_100_CLEANED.csv"
-    df.to_csv(csv_path, index=False)
-    
-    return {
-        "status": "success",
-        "message": f"Case #{next_id} added successfully",
-        "id": next_id,
-        "case": {
-            "params": d,
-            "targets": {
-                "id": next_id,
-                "Mtrue": new_row['Mtrue'],
-                "TEtrue": new_row['TEtrue'],
-                "Sound": new_row['Sound']
-            }
-        }
-    }
 
 
 if __name__ == "__main__":

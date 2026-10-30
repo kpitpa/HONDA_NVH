@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import Plot from 'react-plotly.js';
 import { useApp } from '../context/AppContext';
 import { useTranslate } from '../i18n';
@@ -16,14 +16,17 @@ export default function MultiComparePage() {
   const [hoveredCase, setHoveredCase] = useState(null);
   const [selected, setSelected] = useState([1, 22, 93]);
   const [data, setData] = useState(null);
+  const [tierFilter, setTierFilter] = useState('all'); // 'all' | 'best' | 'worst'
 
   useEffect(() => {
     api.get('/api/case-ids')
       .then(r => {
-        if (r.data.length && typeof r.data[0] === 'object') {
-          setCasesMeta(r.data);
-        } else {
-          setCasesMeta(r.data.map(id => ({ id })));
+        if (Array.isArray(r.data)) {
+          if (r.data.length && typeof r.data[0] === 'object') {
+            setCasesMeta(r.data);
+          } else {
+            setCasesMeta(r.data.map(id => ({ id, tier: 'nominal' })));
+          }
         }
       })
       .catch(() => {});
@@ -42,6 +45,12 @@ export default function MultiComparePage() {
       return [...prev, id];
     });
   };
+
+  const filteredCases = useMemo(() => {
+    if (tierFilter === 'best') return casesMeta.filter(c => c.tier === 'best');
+    if (tierFilter === 'worst') return casesMeta.filter(c => c.tier === 'worst');
+    return casesMeta;
+  }, [casesMeta, tierFilter]);
 
   const charts = [
     { title: '📐 M [µm]', trueCol: 'Mtrue', predCol: 'Pred_M', unit: 'µm', fmt: 1 },
@@ -92,13 +101,43 @@ export default function MultiComparePage() {
   return (
     <div className="page">
       <h2>📊 {t('Multi-Dataset Comparison')}</h2>
-      <p className="subtitle">{t('Select 2–4 datasets:')}</p>
+      <p className="subtitle">{t('Select 2–4 datasets to compare:')}</p>
 
-      {/* CHIP SELECTION GRID WITH HOVER CARD */}
+      {/* FILTER & LEGEND TOOLBAR */}
+      <div className="chip-filter-bar">
+        <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)' }}>
+          {t('Filter Cases')}:
+        </span>
+        <button
+          className={`chip-filter-btn ${tierFilter === 'all' ? 'active' : ''}`}
+          onClick={() => setTierFilter('all')}
+        >
+          {t('All Datasets')} ({casesMeta.length})
+        </button>
+        <button
+          className={`chip-filter-btn ${tierFilter === 'best' ? 'active' : ''}`}
+          onClick={() => setTierFilter('best')}
+          style={{ borderColor: 'rgba(34, 197, 94, 0.5)', color: tierFilter === 'best' ? 'white' : '#4ade80' }}
+        >
+          🏆 {t('Best Performers')} ({casesMeta.filter(c => c.tier === 'best').length})
+        </button>
+        <button
+          className={`chip-filter-btn ${tierFilter === 'worst' ? 'active' : ''}`}
+          onClick={() => setTierFilter('worst')}
+          style={{ borderColor: 'rgba(239, 68, 68, 0.5)', color: tierFilter === 'worst' ? 'white' : '#f87171' }}
+        >
+          ⚠️ {t('High NVH / Outliers')} ({casesMeta.filter(c => c.tier === 'worst').length})
+        </button>
+      </div>
+
+      {/* CHIP SELECTION GRID */}
       <div className="multi-select-grid">
-        {casesMeta.map(item => {
+        {filteredCases.map(item => {
           const cid = item.id;
+          const isSelected = selected.includes(cid);
           const isHovered = hoveredCase?.id === cid;
+          const tierClass = item.tier === 'best' ? 'tier-best' : item.tier === 'worst' ? 'tier-worst' : '';
+
           return (
             <div
               key={cid}
@@ -107,15 +146,17 @@ export default function MultiComparePage() {
               onMouseLeave={() => setHoveredCase(null)}
             >
               <button
-                className={`chip ${selected.includes(cid) ? 'selected' : ''}`}
+                className={`chip ${tierClass} ${isSelected ? 'selected' : ''}`}
                 onClick={() => toggleId(cid)}
               >
-                #{cid}
+                #{cid} {item.tier === 'best' ? '★' : ''}
               </button>
 
               {isHovered && item.mn !== undefined && (
                 <div className="chip-tooltip">
-                  <div className="chip-tooltip-title">Case #{cid} {t('Specs')}</div>
+                  <div className="chip-tooltip-title">
+                    Case #{cid} {t('Specs')} {item.tier === 'best' ? '• 🏆 Best' : item.tier === 'worst' ? '• ⚠️ High NVH' : ''}
+                  </div>
                   <div className="chip-tooltip-grid">
                     <div>mn: <b>{item.mn} mm</b></div>
                     <div>β: <b>{item.beta}°</b></div>
